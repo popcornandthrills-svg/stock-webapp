@@ -1,0 +1,27 @@
+{
+  "name": "goldprince-stock-web",
+  "private": true,
+  "version": "0.1.0",
+  "scripts": {
+    "dev": "set NEXT_DISABLE_DEVTOOLS=1&& next dev --hostname 127.0.0.1 --port 3001",
+    "build": "next build",
+    "start": "node node_modules/next/dist/bin/next start -p 3001 -H 127.0.0.1",
+    "lint": "next lint"
+  },
+  "dependencies": {
+    "@types/jsbarcode": "^3.11.4",
+    "jsbarcode": "^3.12.3",
+    "next": "^15.3.3",
+    "pdf-lib": "^1.17.1",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "xlsx": "^0.18.5",
+    "xlsx-js-style": "^1.2.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.0",
+    "@types/react": "^19.1.2",
+    "@types/react-dom": "^19.1.2",
+    "typescript": "^5.8.3"
+  }
+}

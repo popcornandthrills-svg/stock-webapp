@@ -1,0 +1,36 @@
+# Node / Next.js
+node_modules/
+.next/
+out/
+coverage/
+*.tsbuildinfo
+
+# Python
+__pycache__/
+*.py[cod]
+
+# Environment files
+.env
+.env.local
+.env.*.local
+!.env.example
+
+# Logs
+*.log
+*.out
+*.err
+*.pid
+dev-*.log
+backend-*.log
+frontend-*.log
+node-*.log
+prod-*.log
+start.log
+
+# OS / editor
+.DS_Store
+Thumbs.db
+
+# Local database backups you do not want in Git
+stock.db.pre-restore.bak
+backup/*.zip

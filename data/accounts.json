@@ -1,0 +1,20 @@
+[
+  {
+    "username": "admin",
+    "password": "admin123",
+    "role": "admin",
+    "branch_name": "All branches"
+  },
+  {
+    "username": "teja",
+    "password": "teja561",
+    "role": "manager",
+    "branch_name": "All branches"
+  },
+  {
+    "username": "pavani",
+    "password": "pavani789",
+    "role": "staff",
+    "branch_name": "NAVISHKA"
+  }
+]

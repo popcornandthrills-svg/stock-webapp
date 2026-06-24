@@ -1,0 +1,5 @@
+fastapi
+openpyxl
+psycopg[binary]
+pypdf
+uvicorn
