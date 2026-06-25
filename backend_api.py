@@ -950,6 +950,12 @@ def moves(
 ):
     branch_name, branch_id = branch_context(branch, user)
     rows = db.moves(limit=limit, branch_id=branch_id, art_no=art_no)
+    transfer_types = {"transfer", "branch_transfer"}
+    rows = [
+        row
+        for row in rows
+        if str(row.get("mtype") or row.get("type") or "").strip().lower() in transfer_types
+    ]
     return {"branch": branch_name or "All", "count": len(rows), "moves": rows}
 
 
