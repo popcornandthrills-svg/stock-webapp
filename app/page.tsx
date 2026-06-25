@@ -1461,13 +1461,17 @@ export default function Home() {
       setInventoryRows((current) =>
         current.map((row) => {
           const currentArt = String(row.art_no || "").trim().toUpperCase();
-          const match = pendingTransfers.find((pending) => String(pending.lookup || "").trim().toUpperCase() === currentArt);
-          if (!match) return row;
-          return applyTransferToInventoryRow(row, {
-            from_branch: match.from_branch,
-            to_branch: match.to_branch,
-            qty: match.qty,
-          });
+          const matches = pendingTransfers.filter((pending) => String(pending.lookup || "").trim().toUpperCase() === currentArt);
+          if (!matches.length) return row;
+          return matches.reduce(
+            (nextRow, match) =>
+              applyTransferToInventoryRow(nextRow, {
+                from_branch: match.from_branch,
+                to_branch: match.to_branch,
+                qty: match.qty,
+              }),
+            row
+          );
         })
       );
       if (committedMoves.length) {
