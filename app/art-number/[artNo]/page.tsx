@@ -281,7 +281,7 @@ export default function ArtNumberDetailsPage() {
             cache: "no-store",
             headers: { Authorization: `Bearer ${token}` },
           }),
-          fetch(apiUrl(`/inventory?limit=2000&search=${encodeURIComponent(artNo)}`), {
+          fetch(apiUrl(`/inventory?limit=1000&search=${encodeURIComponent(artNo)}`), {
             cache: "no-store",
             headers: { Authorization: `Bearer ${token}` },
           }),
