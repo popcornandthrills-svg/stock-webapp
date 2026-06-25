@@ -674,7 +674,7 @@ export default function ArtNumberDetailsPage() {
           {loading ? <div className="art-minimal-status">Loading details...</div> : null}
           {error ? <div className="art-minimal-error">{error}</div> : null}
 
-          {!loading && item ? (
+          {!loading && (item || moves.length || history.length) ? (
             <>
               <div className="art-details-table art-details-table--minimal">
                 {detailsRows.map(([label, value]) => (
@@ -767,6 +767,8 @@ export default function ArtNumberDetailsPage() {
                 </>
               ) : null}
             </>
+          ) : !loading ? (
+            <div className="art-minimal-status">No details or stock movement rows found for this art number.</div>
           ) : null}
         </section>
       </section>
