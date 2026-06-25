@@ -1620,37 +1620,70 @@ class DB:
             "top_overstock": over[:10],
         }
 
-    def moves(self, limit=150, branch_id=None):
+    def moves(self, limit=150, branch_id=None, art_no=None):
+        art = str(art_no or "").strip().upper()
         with self.c() as db:
             if branch_id is None:
-                rows = db.execute(
-                    """
-                    SELECT m.id,m.mtype,m.qty,m.note,m.created_at,i.art_no,i.category,i.item_name,
-                           p1.name from_p,p2.name to_p
-                    FROM moves m
-                    JOIN items i ON i.id=m.item_id
-                    LEFT JOIN points p1 ON p1.id=m.from_id
-                    LEFT JOIN points p2 ON p2.id=m.to_id
-                    ORDER BY m.id DESC
-                    LIMIT ?
-                    """,
-                    (int(limit),),
-                ).fetchall()
+                if art:
+                    rows = db.execute(
+                        """
+                        SELECT m.id,m.mtype,m.qty,m.note,m.created_at,i.art_no,i.category,i.item_name,
+                               p1.name from_p,p2.name to_p
+                        FROM moves m
+                        JOIN items i ON i.id=m.item_id
+                        LEFT JOIN points p1 ON p1.id=m.from_id
+                        LEFT JOIN points p2 ON p2.id=m.to_id
+                        WHERE UPPER(i.art_no)=?
+                        ORDER BY m.id DESC
+                        LIMIT ?
+                        """,
+                        (art, int(limit)),
+                    ).fetchall()
+                else:
+                    rows = db.execute(
+                        """
+                        SELECT m.id,m.mtype,m.qty,m.note,m.created_at,i.art_no,i.category,i.item_name,
+                               p1.name from_p,p2.name to_p
+                        FROM moves m
+                        JOIN items i ON i.id=m.item_id
+                        LEFT JOIN points p1 ON p1.id=m.from_id
+                        LEFT JOIN points p2 ON p2.id=m.to_id
+                        ORDER BY m.id DESC
+                        LIMIT ?
+                        """,
+                        (int(limit),),
+                    ).fetchall()
             else:
-                rows = db.execute(
-                    """
-                    SELECT m.id,m.mtype,m.qty,m.note,m.created_at,i.art_no,i.category,i.item_name,
-                           p1.name from_p,p2.name to_p
-                    FROM moves m
-                    JOIN items i ON i.id=m.item_id
-                    LEFT JOIN points p1 ON p1.id=m.from_id
-                    LEFT JOIN points p2 ON p2.id=m.to_id
-                    WHERE (m.from_id=? OR m.to_id=?)
-                    ORDER BY m.id DESC
-                    LIMIT ?
-                    """,
-                    (int(branch_id), int(branch_id), int(limit)),
-                ).fetchall()
+                if art:
+                    rows = db.execute(
+                        """
+                        SELECT m.id,m.mtype,m.qty,m.note,m.created_at,i.art_no,i.category,i.item_name,
+                               p1.name from_p,p2.name to_p
+                        FROM moves m
+                        JOIN items i ON i.id=m.item_id
+                        LEFT JOIN points p1 ON p1.id=m.from_id
+                        LEFT JOIN points p2 ON p2.id=m.to_id
+                        WHERE (m.from_id=? OR m.to_id=?) AND UPPER(i.art_no)=?
+                        ORDER BY m.id DESC
+                        LIMIT ?
+                        """,
+                        (int(branch_id), int(branch_id), art, int(limit)),
+                    ).fetchall()
+                else:
+                    rows = db.execute(
+                        """
+                        SELECT m.id,m.mtype,m.qty,m.note,m.created_at,i.art_no,i.category,i.item_name,
+                               p1.name from_p,p2.name to_p
+                        FROM moves m
+                        JOIN items i ON i.id=m.item_id
+                        LEFT JOIN points p1 ON p1.id=m.from_id
+                        LEFT JOIN points p2 ON p2.id=m.to_id
+                        WHERE (m.from_id=? OR m.to_id=?)
+                        ORDER BY m.id DESC
+                        LIMIT ?
+                        """,
+                        (int(branch_id), int(branch_id), int(limit)),
+                    ).fetchall()
         return [dict(r) for r in rows]
 
 

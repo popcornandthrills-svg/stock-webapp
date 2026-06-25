@@ -108,6 +108,30 @@ function normalizeItem(...sources: unknown[]): InventoryItem {
   };
 }
 
+function matchesArtNo(value: unknown, artNo: string) {
+  return String(value || "").trim().toUpperCase() === String(artNo || "").trim().toUpperCase();
+}
+
+function parseAuditMoveRow(row: AnyRecord, artNo: string): MoveRow | null {
+  const note = String(row.note || "");
+  const event = String(row.event_type || "");
+  const art = String(artNo || "").trim().toUpperCase();
+  const relevant = /transfer|stock movement|branch transfer|branch_transfer/i.test(note) || /transfer|move|stock/i.test(event);
+  if (!relevant || !note.toUpperCase().includes(art)) return null;
+  const fromMatch = note.match(/\bfrom\s+([A-Z0-9 ._-]+?)(?:\s+to\b|\s+\|)/i);
+  const toMatch = note.match(/\bto\s+([A-Z0-9 ._-]+?)(?:\s+\||\s+qty\b|\s+note\b|$)/i);
+  const qtyMatch = note.match(/\bqty[:\s]+(\d+(?:\.\d+)?)/i);
+  return {
+    created_at: String(row.created_at || ""),
+    mtype: /branch transfer/i.test(note) ? "branch_transfer" : /sale/i.test(note) ? "sale" : "transfer",
+    qty: qtyMatch ? Number(qtyMatch[1]) : 0,
+    from_p: fromMatch ? fromMatch[1].trim() : "",
+    to_p: toMatch ? toMatch[1].trim() : "",
+    note,
+    art_no: String(artNo || ""),
+  };
+}
+
 function normalizeBranchQty(item: InventoryItem) {
   const by = item.by || {};
   const entries = Object.entries(by)
@@ -244,7 +268,7 @@ export default function ArtNumberDetailsPage() {
       setLoading(true);
       setError("");
       try {
-        const [itemRes, historyRes, lookupRes, inventoryRes, movesRes] = await Promise.all([
+        const [itemRes, historyRes, lookupRes, inventoryRes, movesRes, auditRes] = await Promise.all([
           fetch(apiUrl(`/inventory/item-by-art/${encodeURIComponent(artNo)}`), {
             cache: "no-store",
             headers: { Authorization: `Bearer ${token}` },
@@ -261,18 +285,26 @@ export default function ArtNumberDetailsPage() {
             cache: "no-store",
             headers: { Authorization: `Bearer ${token}` },
           }),
-          fetch(apiUrl(`/moves?limit=300`), {
+          fetch(apiUrl(`/moves?limit=1000&art_no=${encodeURIComponent(artNo)}`), {
+            // Ask the backend for this art number directly so older movements are not lost
+            // when the global recent-moves slice is shorter than the item's history.
+            // The backend still returns branch-scoped results based on the admin token.
+            cache: "no-store",
+            headers: { Authorization: `Bearer ${token}` },
+          }),
+          fetch(apiUrl(`/audit-logs?limit=300`), {
             cache: "no-store",
             headers: { Authorization: `Bearer ${token}` },
           }),
         ]);
 
-        const [itemJson, historyJson, lookupJson, inventoryJson, movesJson] = await Promise.all([
+        const [itemJson, historyJson, lookupJson, inventoryJson, movesJson, auditJson] = await Promise.all([
           itemRes.json().catch(() => ({})),
           historyRes.json().catch(() => ({})),
           lookupRes.json().catch(() => ({})),
           inventoryRes.json().catch(() => ({})),
           movesRes.json().catch(() => ({})),
+          auditRes.json().catch(() => ({})),
         ]);
 
         if (cancelled) return;
@@ -312,9 +344,19 @@ export default function ArtNumberDetailsPage() {
         });
 
         const rows = Array.isArray(movesJson?.moves) ? movesJson.moves : [];
-        setMoves(
-          rows.filter((row: MoveRow) => String(deepFindValue(row, "art_no", "ART_NO", "Art No") || "").trim().toUpperCase() === artNo.toUpperCase())
-        );
+        const auditRows = Array.isArray((auditJson as AnyRecord)?.items) ? (auditJson as AnyRecord).items : [];
+        const moveRows = rows.filter((row: MoveRow) => matchesArtNo(deepFindValue(row, "art_no", "ART_NO", "Art No"), artNo));
+        const auditMoveRows = auditRows
+          .map((row: AnyRecord) => parseAuditMoveRow(row, artNo))
+          .filter((row): row is MoveRow => Boolean(row));
+        const combinedMoves = [...moveRows, ...auditMoveRows].filter((row, index, self) => {
+          const key = `${String(row.created_at || "")}|${String(row.mtype || row.type || "")}|${String(row.qty ?? row.quantity ?? 0)}|${String(row.from_p || row.from_branch || "")}|${String(row.to_p || row.to_branch || "")}|${String(row.note || "")}`;
+          return index === self.findIndex((item) => {
+            const itemKey = `${String(item.created_at || "")}|${String(item.mtype || item.type || "")}|${String(item.qty ?? item.quantity ?? 0)}|${String(item.from_p || item.from_branch || "")}|${String(item.to_p || item.to_branch || "")}|${String(item.note || "")}`;
+            return itemKey === key;
+          });
+        });
+        setMoves(combinedMoves.sort((a, b) => String(b.created_at || "").localeCompare(String(a.created_at || ""))));
         const historyRows = Array.isArray((historyJson as AnyRecord)?.history) ? (historyJson as AnyRecord).history : [];
         const localHistory = readLocalAuditHistory();
         const combined = [...historyRows, ...localHistory]

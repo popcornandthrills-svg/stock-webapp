@@ -861,6 +861,20 @@ def create_stock_transfer(payload: StockTransferRequest, _user: CurrentUser = De
             moved_total = qty
         else:
             moved_total = db.multi_transfer(payload.lookup, from_id, transfer_pairs, payload.note)
+        transfer_targets = ", ".join(f"{item.to_branch} {int(item.qty)}" for item in payload.transfers)
+        actor_name = getattr(_user, "user_name", "") or "Admin"
+        db.add_audit_log(
+            "stock_transfer",
+            "Admin",
+            actor_name=actor_name,
+            branch_id=from_id,
+            status="Success",
+            note=(
+                f"ART NO {str(payload.lookup or '').strip().upper()} transfer from {str(payload.from_branch or '').strip()} "
+                f"to {transfer_targets} | Qty: {moved_total}"
+                + (f" | Note: {str(payload.note or '').strip()}" if str(payload.note or '').strip() else "")
+            ),
+        )
         return {"status": "ok", "moved_total": moved_total}
     except ValueError as exc:
         # Transfer validation errors should return a client response instead of
@@ -930,11 +944,12 @@ def sales_load(payload: SalesLoadRequest, _user: CurrentUser = Depends(require_a
 @app.get("/moves")
 def moves(
     branch: Optional[str] = None,
+    art_no: Optional[str] = None,
     limit: int = Query(default=150, ge=1, le=1000),
     user: CurrentUser = Depends(get_current_user),
 ):
     branch_name, branch_id = branch_context(branch, user)
-    rows = db.moves(limit=limit, branch_id=branch_id)
+    rows = db.moves(limit=limit, branch_id=branch_id, art_no=art_no)
     return {"branch": branch_name or "All", "count": len(rows), "moves": rows}
 
 

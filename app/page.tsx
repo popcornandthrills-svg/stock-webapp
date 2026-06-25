@@ -493,6 +493,7 @@ export default function Home() {
   const [movementNote, setMovementNote] = useState("");
   const [movementError, setMovementError] = useState("");
   const [movementPopup, setMovementPopup] = useState<{ title: string; message: string; confirm?: boolean } | null>(null);
+  const [transferSuccessPopup, setTransferSuccessPopup] = useState<{ title: string; message: string } | null>(null);
   const [inventoryPopup, setInventoryPopup] = useState<{ title: string; message: string; confirm?: boolean } | null>(null);
   const [pendingInventoryPayload, setPendingInventoryPayload] = useState<any>(null);
   const [pendingInventoryExists, setPendingInventoryExists] = useState(false);
@@ -524,6 +525,7 @@ export default function Home() {
   const [inventoryMenuOpen, setInventoryMenuOpen] = useState(false);
   const [inventoryHighlightBranch, setInventoryHighlightBranch] = useState("");
   const [inventoryHighlightArtNo, setInventoryHighlightArtNo] = useState("");
+  const [inventoryHighlightExpiresAt, setInventoryHighlightExpiresAt] = useState<number | null>(null);
   const [selectedArtNo, setSelectedArtNo] = useState("");
   const [selectedItemDetail, setSelectedItemDetail] = useState<any>(null);
   const [artDetailsOpen, setArtDetailsOpen] = useState(false);
@@ -536,6 +538,8 @@ export default function Home() {
   const movementQtyRef = useRef<HTMLInputElement | null>(null);
   const bulkStockPopupTimerRef = useRef<number | null>(null);
   const inventoryUploadPopupTimerRef = useRef<number | null>(null);
+  const inventoryHighlightTimerRef = useRef<number | null>(null);
+  const transferSuccessPopupTimerRef = useRef<number | null>(null);
   const pageSize = 20;
 
   const normalizeTab = (value: string | null | undefined): AppTab => {
@@ -1476,6 +1480,8 @@ export default function Home() {
       setSelectedPendingIds(new Set());
       setMovementError("");
       setStatus(`Transferred ${pendingTransfers.length} queued row${pendingTransfers.length === 1 ? "" : "s"}`);
+      setMovesExpanded(true);
+      showTransferSuccessPopup(`Transferred ${pendingTransfers.length} queued row${pendingTransfers.length === 1 ? "" : "s"}. The pending queue is now clear.`);
       await refreshAll();
     } catch (err) {
       const message = err instanceof ApiError ? err.message : err instanceof Error ? err.message : "Transfer failed";
@@ -1489,6 +1495,25 @@ export default function Home() {
 
   function dismissMovementPopup() {
     setMovementPopup(null);
+  }
+
+  function showTransferSuccessPopup(message: string) {
+    setTransferSuccessPopup({ title: "Transfer Complete", message });
+    if (transferSuccessPopupTimerRef.current) {
+      window.clearTimeout(transferSuccessPopupTimerRef.current);
+    }
+    transferSuccessPopupTimerRef.current = window.setTimeout(() => {
+      setTransferSuccessPopup((current) => (current?.message === message ? null : current));
+      transferSuccessPopupTimerRef.current = null;
+    }, 20000);
+  }
+
+  function dismissTransferSuccessPopup() {
+    if (transferSuccessPopupTimerRef.current) {
+      window.clearTimeout(transferSuccessPopupTimerRef.current);
+      transferSuccessPopupTimerRef.current = null;
+    }
+    setTransferSuccessPopup(null);
   }
 
   function parseBulkStockCsv(content: string) {
@@ -2221,6 +2246,7 @@ export default function Home() {
     const quantity = Math.max(0, Number(payload.quantity || 0));
     setInventoryHighlightBranch(branchName);
     setInventoryHighlightArtNo(normalizedArtNo);
+    setInventoryHighlightExpiresAt(Date.now() + 20000);
     setInventoryRows((current) => {
       const existingIndex = current.findIndex((row) => String(row.art_no || "").trim().toUpperCase() === normalizedArtNo);
       const existingRow = existingIndex >= 0 ? current[existingIndex] : null;
@@ -2682,6 +2708,43 @@ export default function Home() {
     setMovementQtyRejected(false);
     setMovementError("");
   }, [movementQtyRejected, movementQtyNumber, movementLookupRecord, movementFromQty]);
+
+  useEffect(() => {
+    if (!inventoryHighlightBranch && !inventoryHighlightArtNo) return undefined;
+    const expiresAt = inventoryHighlightExpiresAt || Date.now() + 20000;
+    const remaining = Math.max(0, expiresAt - Date.now());
+    if (inventoryHighlightTimerRef.current) {
+      window.clearTimeout(inventoryHighlightTimerRef.current);
+    }
+    inventoryHighlightTimerRef.current = window.setTimeout(() => {
+      setInventoryHighlightBranch("");
+      setInventoryHighlightArtNo("");
+      setInventoryHighlightExpiresAt(null);
+      inventoryHighlightTimerRef.current = null;
+    }, remaining);
+    return () => {
+      if (inventoryHighlightTimerRef.current) {
+        window.clearTimeout(inventoryHighlightTimerRef.current);
+        inventoryHighlightTimerRef.current = null;
+      }
+    };
+  }, [inventoryHighlightBranch, inventoryHighlightArtNo, inventoryHighlightExpiresAt]);
+
+  useEffect(() => {
+    if (!inventoryHighlightExpiresAt) return undefined;
+    const interval = window.setInterval(() => {
+      if (Date.now() >= inventoryHighlightExpiresAt) {
+        setInventoryHighlightBranch("");
+        setInventoryHighlightArtNo("");
+        setInventoryHighlightExpiresAt(null);
+        if (inventoryHighlightTimerRef.current) {
+          window.clearTimeout(inventoryHighlightTimerRef.current);
+          inventoryHighlightTimerRef.current = null;
+        }
+      }
+    }, 1000);
+    return () => window.clearInterval(interval);
+  }, [inventoryHighlightExpiresAt]);
 
   useEffect(() => {
     const artNo = String(itemForm.art_no || "").trim().toUpperCase();
@@ -3835,6 +3898,24 @@ export default function Home() {
                         OK
                       </button>
                     )}
+                  </div>
+                </div>
+              </div>
+            ) : null}
+            {transferSuccessPopup ? (
+              <div className="system-dialog-backdrop" role="dialog" aria-modal="true" aria-labelledby="transfer-success-title">
+                <div className="system-dialog">
+                  <div className="system-dialog-title" id="transfer-success-title">
+                    {transferSuccessPopup.title}
+                  </div>
+                  <div className="system-dialog-body">
+                    <div className="system-dialog-icon">✓</div>
+                    <div className="system-dialog-message">{transferSuccessPopup.message}</div>
+                  </div>
+                  <div className="system-dialog-actions">
+                    <button className="primary-btn" type="button" onClick={dismissTransferSuccessPopup}>
+                      OK
+                    </button>
                   </div>
                 </div>
               </div>
