@@ -1394,10 +1394,22 @@ export default function Home() {
     await refreshAll().catch(() => {
       // keep going with the in-memory snapshot if refresh fails
     });
+    const remainingByArt = new Map<string, number>();
+    const resolveRemainingQty = (artNo: string, fromBranch: string) => {
+      const key = `${String(artNo || "").trim().toUpperCase()}|${String(fromBranch || "").trim().toUpperCase()}`;
+      if (!remainingByArt.has(key)) {
+        const record = inventoryRows.find((item) => String(item.art_no || "").trim().toUpperCase() === String(artNo || "").trim().toUpperCase()) || null;
+        remainingByArt.set(key, getBranchAvailableQty(record, fromBranch));
+      }
+      return remainingByArt.get(key) || 0;
+    };
     const invalidRow = pendingTransfers.find((row) => {
-      const record = inventoryRows.find((item) => String(item.art_no || "").trim().toUpperCase() === String(row.lookup || "").trim().toUpperCase()) || null;
-      const availableQty = getBranchAvailableQty(record, row.from_branch);
-      return availableQty <= 0 || Number(row.qty || 0) > availableQty;
+      const remainingQty = resolveRemainingQty(row.lookup, row.from_branch);
+      const requestQty = Number(row.qty || 0);
+      if (remainingQty <= 0 || requestQty > remainingQty) return true;
+      const key = `${String(row.lookup || "").trim().toUpperCase()}|${String(row.from_branch || "").trim().toUpperCase()}`;
+      remainingByArt.set(key, remainingQty - requestQty);
+      return false;
     });
     if (invalidRow) {
       const record = inventoryRows.find((item) => String(item.art_no || "").trim().toUpperCase() === String(invalidRow.lookup || "").trim().toUpperCase()) || null;
