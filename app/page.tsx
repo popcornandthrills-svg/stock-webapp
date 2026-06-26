@@ -1507,8 +1507,24 @@ export default function Home() {
 
       const transferOneRow = async (row: PendingTransferRow) => {
         const controller = new AbortController();
-        const timeoutId = window.setTimeout(() => controller.abort(), 20000);
+        const timeoutId = window.setTimeout(() => controller.abort(), 90000);
         try {
+          const payload = {
+            lookup: row.lookup,
+            art_no: row.lookup,
+            from_branch: row.from_branch,
+            branch: row.from_branch,
+            note: row.note,
+            transfers: [
+              {
+                from_branch: row.from_branch,
+                to_branch: row.to_branch,
+                qty: row.qty,
+              },
+            ],
+          };
+          console.debug("[transfer] submit", payload);
+          setStatus(`Submitting ${row.lookup} ${row.qty} Qty...`);
           const result = await api<{
             move?: MoveRow;
             moves?: MoveRow[];
@@ -1518,22 +1534,10 @@ export default function Home() {
             {
               method: "POST",
               signal: controller.signal,
-              body: JSON.stringify({
-                lookup: row.lookup,
-                art_no: row.lookup,
-                from_branch: row.from_branch,
-                branch: row.from_branch,
-                note: row.note,
-                transfers: [
-                  {
-                    from_branch: row.from_branch,
-                    to_branch: row.to_branch,
-                    qty: row.qty,
-                  },
-                ],
-              }),
+              body: JSON.stringify(payload),
             },
           );
+          console.debug("[transfer] ok", row.lookup, result);
           return { row, result };
         } finally {
           window.clearTimeout(timeoutId);
@@ -1568,6 +1572,7 @@ export default function Home() {
               : outcome.reason instanceof Error
                 ? outcome.reason.message
                 : "Transfer failed";
+          console.debug("[transfer] failed", reason);
           const failedRow = queuedRows.find((row) => !successfulIds.has(row.id) && !failedRows.some((item) => item.row.id === row.id));
           if (failedRow) failedRows.push({ row: failedRow, reason });
         }
