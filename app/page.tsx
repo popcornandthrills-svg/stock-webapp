@@ -1506,48 +1506,40 @@ export default function Home() {
       setStatus(`Transferring ${queuedRows.length} queued row${queuedRows.length === 1 ? "" : "s"}...`);
 
       const transferOneRow = async (row: PendingTransferRow) => {
-        const controller = new AbortController();
-        const timeoutId = window.setTimeout(() => controller.abort(), 90000);
-        try {
-          const payload = {
-            lookup: row.lookup,
-            art_no: row.lookup,
-            from_branch: row.from_branch,
-            branch: row.from_branch,
-            note: row.note,
-            transfers: [
-              {
-                from_branch: row.from_branch,
-                to_branch: row.to_branch,
-                qty: row.qty,
-              },
-            ],
-          };
-          console.debug("[transfer] submit", payload);
-          setStatus(`Submitting ${row.lookup} ${row.qty} Qty...`);
-          const result = await api<{
-            move?: MoveRow;
-            moves?: MoveRow[];
-          }>(
-            "/stock/transfers",
-            token,
+        const payload = {
+          lookup: row.lookup,
+          art_no: row.lookup,
+          from_branch: row.from_branch,
+          branch: row.from_branch,
+          note: row.note,
+          transfers: [
             {
-              method: "POST",
-              signal: controller.signal,
-              body: JSON.stringify(payload),
+              from_branch: row.from_branch,
+              to_branch: row.to_branch,
+              qty: row.qty,
             },
-          );
-          console.debug("[transfer] ok", row.lookup, result);
-          return { row, result };
-        } finally {
-          window.clearTimeout(timeoutId);
-        }
+          ],
+        };
+        console.debug("[transfer] submit", payload);
+        setStatus(`Submitting ${row.lookup} ${row.qty} Qty...`);
+        const result = await api<{
+          move?: MoveRow;
+          moves?: MoveRow[];
+        }>(
+          "/stock/transfers",
+          token,
+          {
+            method: "POST",
+            body: JSON.stringify(payload),
+          },
+        );
+        console.debug("[transfer] ok", row.lookup, result);
+        return { row, result };
       };
 
-      const results = await Promise.allSettled(queuedRows.map((row) => transferOneRow(row)));
-      for (const outcome of results) {
-        if (outcome.status === "fulfilled") {
-          const { row, result } = outcome.value;
+      for (const row of queuedRows) {
+        try {
+          const { result } = await transferOneRow(row);
           successfulIds.add(row.id);
           const syntheticMove: MoveRow = {
             created_at: row.transfer_date ? `${row.transfer_date}T00:00:00` : committedAt,
@@ -1565,16 +1557,10 @@ export default function Home() {
           committedMoves.push(syntheticMove);
           if (result.move) committedMoves.push(result.move);
           if (Array.isArray(result.moves) && result.moves.length) committedMoves.push(...result.moves);
-        } else {
-          const reason =
-            outcome.reason instanceof ApiError
-              ? outcome.reason.message
-              : outcome.reason instanceof Error
-                ? outcome.reason.message
-                : "Transfer failed";
-          console.debug("[transfer] failed", reason);
-          const failedRow = queuedRows.find((row) => !successfulIds.has(row.id) && !failedRows.some((item) => item.row.id === row.id));
-          if (failedRow) failedRows.push({ row: failedRow, reason });
+        } catch (err) {
+          const reason = err instanceof ApiError ? err.message : err instanceof Error ? err.message : "Transfer failed";
+          console.debug("[transfer] failed", row.lookup, reason);
+          failedRows.push({ row, reason });
         }
       }
 
