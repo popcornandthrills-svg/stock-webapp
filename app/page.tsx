@@ -385,7 +385,13 @@ async function api<T>(path: string, token?: string, init?: RequestInit) {
     const text = await response.text();
     throw new ApiError(response.status, text || `Request failed: ${response.status}`);
   }
-  return (await response.json()) as T;
+  const text = await response.text();
+  if (!text.trim()) return {} as T;
+  try {
+    return JSON.parse(text) as T;
+  } catch {
+    return text as T;
+  }
 }
 
 function decodePrice(token: string) {
