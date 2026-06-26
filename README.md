@@ -95,6 +95,28 @@ Notes:
 - Keep the backend on Railway, Render, or another Python host, then point the Vercel frontend to that hosted backend.
 - For the first Vercel test, use a real hosted backend URL in the environment variables. If the backend is still local, the Vercel page will load but data calls will fail.
 
+## Backup and restore
+
+Create a snapshot of the main persistent files before risky changes:
+
+```powershell
+.\backup-data.ps1
+```
+
+This saves:
+
+- `stock.db`
+- `stock.db.pre-restore.bak`
+- `data\accounts.json`
+
+To restore from a snapshot folder:
+
+```powershell
+.\restore-data.ps1 -SnapshotDir .\backups\YYYY-MM-DD_HH-mm-ss
+```
+
+If you lose data in the browser only, recovery may still depend on `localStorage` being intact. For anything important, treat the backup folder as the real recovery source.
+
 ## Neon database
 
 The backend can run against Neon/Postgres by setting:

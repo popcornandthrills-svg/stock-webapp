@@ -5,5 +5,7 @@ type FooterStatusBarProps = {
 };
 
 export function FooterStatusBar({ status }: FooterStatusBarProps) {
-  return <div className="footer-status-bar">{status || "Signed in as Admin"}</div>;
+  const text = status || "Signed in as Admin";
+  const isError = /failed|error|unable|forbidden|unauthorized|missing bearer token/i.test(text);
+  return <div className={`footer-status-bar ${isError ? "footer-status-bar--error" : ""}`}>{text}</div>;
 }

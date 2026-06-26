@@ -21,6 +21,16 @@ function normalizeUsername(value: string) {
   return String(value || "").trim().toLowerCase();
 }
 
+function isSameOrigin(request: Request) {
+  const origin = request.headers.get("origin") || request.headers.get("referer") || "";
+  if (!origin) return process.env.NODE_ENV !== "production";
+  try {
+    return new URL(origin).host === new URL(request.url).host;
+  } catch {
+    return false;
+  }
+}
+
 function sanitizeAccounts(value: unknown): AccountRecord[] {
   if (!Array.isArray(value)) return [defaultAdmin()];
   const cleaned = value
@@ -67,12 +77,18 @@ async function writeAccounts(accounts: AccountRecord[]) {
   return next;
 }
 
-export async function GET() {
+export async function GET(request: Request) {
+  if (!isSameOrigin(request)) {
+    return Response.json({ detail: "Forbidden" }, { status: 403 });
+  }
   const accounts = await ensureSeededAccounts();
   return Response.json({ accounts });
 }
 
 export async function PUT(request: Request) {
+  if (!isSameOrigin(request)) {
+    return Response.json({ detail: "Forbidden" }, { status: 403 });
+  }
   const payload = (await request.json().catch(() => ({}))) as { accounts?: unknown };
   const accounts = sanitizeAccounts(payload.accounts);
   const saved = await writeAccounts(accounts);

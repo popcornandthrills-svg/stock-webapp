@@ -37,6 +37,30 @@ function Stop-NgrokProcess {
   }
 }
 
+function Wait-ForPort {
+  param(
+    [string]$TargetPort,
+    [int]$TimeoutSeconds = 60
+  )
+
+  $deadline = [DateTime]::UtcNow.AddSeconds($TimeoutSeconds)
+  while ([DateTime]::UtcNow -lt $deadline) {
+    try {
+      $listeners = netstat -ano | Select-String ":$TargetPort"
+      foreach ($line in $listeners) {
+        if ($line.ToString() -match "LISTENING") {
+          return $true
+        }
+      }
+    } catch {
+      # keep waiting
+    }
+    Start-Sleep -Seconds 1
+  }
+
+  return $false
+}
+
 function Start-DetachedProcess {
   param(
     [string]$FilePath,
@@ -77,10 +101,17 @@ Write-Host "Starting frontend on port $Port..."
 $nodeExe = "C:\Program Files\nodejs\node.exe"
 $nextCli = Join-Path $ProjectRoot "node_modules\next\dist\bin\next"
 Start-DetachedProcess -FilePath $nodeExe -ArgumentList @(
-  $nextCli, "start", "-p", $Port, "-H", "127.0.0.1"
+  "`"$nextCli`" start -p $Port -H 127.0.0.1"
 ) -WorkingDirectory $ProjectRoot -StdOut $frontendLog -StdErr $frontendErr -Hidden
 
-Start-Sleep -Seconds 4
+Write-Host "Waiting for frontend to listen on port $Port..."
+if (-not (Wait-ForPort -TargetPort $Port -TimeoutSeconds 60)) {
+  Write-Host "Frontend did not start on port $Port."
+  Write-Host "Check these logs:"
+  Write-Host "Backend log: $backendOut / $backendErr"
+  Write-Host "Frontend log: $frontendLog / $frontendErr"
+  exit 1
+}
 
 Write-Host "Starting ngrok tunnel for http://127.0.0.1:$Port ..."
 $ngrokCommand = Get-Command ngrok -ErrorAction Stop

@@ -24,10 +24,9 @@ Write-Host "Building frontend..."
 Write-Host "Starting frontend..."
 $nodeExe = "C:\Program Files\nodejs\node.exe"
 $nextCli = Join-Path $ProjectRoot "node_modules\next\dist\bin\next"
-$frontendCommand = '"' + $nodeExe + '" "' + $nextCli + '" start -p 3001 -H 127.0.0.1'
-Start-Process -WindowStyle Hidden -FilePath "cmd.exe" -ArgumentList @(
-  "/c", "start", '""', "/b", $frontendCommand
-) -WorkingDirectory $ProjectRoot
+Start-Process -WindowStyle Hidden -FilePath $nodeExe -ArgumentList @(
+  "`"$nextCli`" start -p 3001 -H 127.0.0.1"
+) -WorkingDirectory $ProjectRoot -RedirectStandardOutput $frontendLog -RedirectStandardError $frontendErr
 
 Write-Host "Starting GOLDPRINCE web app..."
 Write-Host "Backend log: $backendOut / $backendErr"

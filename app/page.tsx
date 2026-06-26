@@ -141,6 +141,7 @@ const STORAGE_KEYS = {
   branchName: "goldprince.branchName",
   role: "goldprince.role",
   auditHistory: "goldprince.auditHistory",
+  pendingTransfers: "goldprince.pendingTransfers",
 };
 
 class ApiError extends Error {
@@ -208,6 +209,55 @@ function toAuditRowArray(value: unknown): AuditRow[] {
   return isAuditRowArray(value) ? value : [];
 }
 
+function isPendingTransferRowArray(value: unknown): value is PendingTransferRow[] {
+  return Array.isArray(value)
+    && value.every((row) =>
+      Boolean(row)
+      && typeof row === "object"
+      && typeof (row as PendingTransferRow).id === "number"
+      && typeof (row as PendingTransferRow).lookup === "string"
+      && typeof (row as PendingTransferRow).from_branch === "string"
+      && typeof (row as PendingTransferRow).to_branch === "string"
+      && typeof (row as PendingTransferRow).qty === "number"
+      && typeof (row as PendingTransferRow).note === "string"
+      && typeof (row as PendingTransferRow).transfer_date === "string"
+    );
+}
+
+function normalizePendingTransfer(row: PendingTransferRow) {
+  return {
+    ...row,
+    lookup: String(row.lookup || "").trim(),
+    from_branch: String(row.from_branch || "").trim(),
+    to_branch: String(row.to_branch || "").trim(),
+    qty: Number(row.qty || 0),
+    note: String(row.note || "").trim(),
+    transfer_date: String(row.transfer_date || "").trim(),
+  };
+}
+
+function mergePendingTransfers(rows: PendingTransferRow[]) {
+  const merged: PendingTransferRow[] = [];
+  for (const rawRow of rows) {
+    const row = normalizePendingTransfer(rawRow);
+    if (!row.lookup || !row.from_branch || !row.to_branch || !Number.isFinite(row.qty) || row.qty <= 0) continue;
+    const existing = merged.find(
+      (item) =>
+        String(item.lookup).toUpperCase() === row.lookup.toUpperCase()
+        && String(item.from_branch).toUpperCase() === row.from_branch.toUpperCase()
+        && String(item.to_branch).toUpperCase() === row.to_branch.toUpperCase()
+        && String(item.note).toUpperCase() === row.note.toUpperCase()
+    );
+    if (existing) {
+      existing.qty += row.qty;
+      if (!existing.transfer_date && row.transfer_date) existing.transfer_date = row.transfer_date;
+    } else {
+      merged.push({ ...row, id: row.id || Date.now() + Math.floor(Math.random() * 1000) });
+    }
+  }
+  return merged;
+}
+
 function isLocalAccountArray(value: unknown): value is LocalAccount[] {
   return Array.isArray(value)
     && value.every((account) =>
@@ -232,6 +282,32 @@ function writeStoredJson(key: string, value: unknown) {
   if (typeof window === "undefined") return;
   try {
     window.localStorage.setItem(key, JSON.stringify(value));
+  } catch {
+    // ignore storage quota or access issues
+  }
+}
+
+function readStoredSessionJson<T>(key: string, fallback: T, validator?: (value: unknown) => value is T): T {
+  if (typeof window === "undefined") return fallback;
+  try {
+    const raw = window.sessionStorage.getItem(key);
+    if (!raw) return fallback;
+    const parsed = JSON.parse(raw) as unknown;
+    if (validator && !validator(parsed)) {
+      window.sessionStorage.removeItem(key);
+      return fallback;
+    }
+    return parsed as T;
+  } catch {
+    window.sessionStorage.removeItem(key);
+    return fallback;
+  }
+}
+
+function writeStoredSessionJson(key: string, value: unknown) {
+  if (typeof window === "undefined") return;
+  try {
+    window.sessionStorage.setItem(key, JSON.stringify(value));
   } catch {
     // ignore storage quota or access issues
   }
@@ -540,6 +616,7 @@ export default function Home() {
   const inventoryUploadPopupTimerRef = useRef<number | null>(null);
   const inventoryHighlightTimerRef = useRef<number | null>(null);
   const transferSuccessPopupTimerRef = useRef<number | null>(null);
+  const refreshInFlightRef = useRef(false);
   const pageSize = 20;
 
   const normalizeTab = (value: string | null | undefined): AppTab => {
@@ -669,6 +746,20 @@ export default function Home() {
   useEffect(() => {
     writeStoredJson(STORAGE_KEYS.auditHistory, auditHistory);
   }, [auditHistory]);
+
+  useEffect(() => {
+    if (!hydrated) return;
+    const restored = readStoredSessionJson<PendingTransferRow[]>(STORAGE_KEYS.pendingTransfers, [], isPendingTransferRowArray);
+    const merged = mergePendingTransfers(restored);
+    if (merged.length && pendingTransfers.length === 0) {
+      setPendingTransfers(merged);
+    }
+  }, [hydrated, pendingTransfers.length]);
+
+  useEffect(() => {
+    if (!hydrated) return;
+    writeStoredSessionJson(STORAGE_KEYS.pendingTransfers, mergePendingTransfers(pendingTransfers));
+  }, [hydrated, pendingTransfers]);
 
   function branchIdForName(branchName: string) {
     const normalized = String(branchName || "").trim().toUpperCase();
@@ -870,15 +961,21 @@ export default function Home() {
   }
 
   async function refreshAll() {
-    const bundle = await loadBootstrapBundle();
-    setToken(bundle.token || "");
-    setRole(bundle.role || "admin");
-    setUserName(bundle.user_name || "Admin");
-    setBranchName(bundle.branch_name || "All branches");
-    setInventoryRows(toInventoryRowArray(bundle.inventory || []));
-    setInventoryOverview(isPlainObject(bundle.overview) ? bundle.overview : {});
-    setMovesRows(toMoveRowArray(bundle.moves || []));
-    setError("");
+    if (refreshInFlightRef.current) return;
+    refreshInFlightRef.current = true;
+    try {
+      const bundle = await loadBootstrapBundle();
+      setToken(bundle.token || "");
+      setRole(bundle.role || "admin");
+      setUserName(bundle.user_name || "Admin");
+      setBranchName(bundle.branch_name || "All branches");
+      setInventoryRows(toInventoryRowArray(bundle.inventory || []));
+      setInventoryOverview(isPlainObject(bundle.overview) ? bundle.overview : {});
+      setMovesRows(toMoveRowArray(bundle.moves || []));
+      setError("");
+    } finally {
+      refreshInFlightRef.current = false;
+    }
   }
 
   function appendLocalAuditHistory(payload: any, action: "created" | "updated") {
@@ -952,11 +1049,7 @@ export default function Home() {
 
   useEffect(() => {
     if (!token) return;
-    const timer = window.setTimeout(() => {
-      refreshAll().catch((err) => setError(err instanceof Error ? err.message : "Failed to refresh"));
-    }, 250);
-    return () => window.clearTimeout(timer);
-  }, [token, inventorySearch, inventoryBranch, movesBranch, movesLimit, branchName]);
+  }, [token]);
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -1039,7 +1132,7 @@ export default function Home() {
     }
     setMovementError("");
     setMovementQtyRejected(false);
-    setPendingTransfers((current) => [
+    setPendingTransfers((current) => mergePendingTransfers([
       ...current,
       {
         id: Date.now() + Math.floor(Math.random() * 1000),
@@ -1050,7 +1143,7 @@ export default function Home() {
         note: movementNote.trim(),
         transfer_date: movementDate,
       },
-    ]);
+    ]));
     setStatus(`Added ${lookup} to pending queue`);
     setMovementQty("");
   }
@@ -1302,7 +1395,7 @@ export default function Home() {
       return;
     }
     setBulkStockPopup(null);
-    setPendingTransfers((current) => [
+    setPendingTransfers((current) => mergePendingTransfers([
       ...current,
       ...rowsToQueue.map((row) => ({
         id: Date.now() + Math.floor(Math.random() * 1000) + Math.floor(Math.random() * 10000),
@@ -1314,7 +1407,7 @@ export default function Home() {
         note: `Bulk stock file: ${bulkStockFileName || "selected file"}`,
         transfer_date: queuedAt,
       })),
-    ]);
+    ]));
     setStatus(`Added ${rowsToQueue.length} bulk row${rowsToQueue.length === 1 ? "" : "s"} to pending queue`);
     showBulkStockPopupTemporarily(
       "Added to Pending Queue",
@@ -1364,6 +1457,7 @@ export default function Home() {
   function clearSavedData() {
     if (typeof window !== "undefined") {
       Object.values(STORAGE_KEYS).forEach((key) => window.localStorage.removeItem(key));
+      window.sessionStorage.removeItem(STORAGE_KEYS.pendingTransfers);
     }
     setToken("");
     setRole("");
@@ -1391,89 +1485,98 @@ export default function Home() {
 
   async function commitPendingQueueTransfer() {
     setMovementPopup(null);
-    await refreshAll().catch(() => {
-      // keep going with the in-memory snapshot if refresh fails
-    });
-    const remainingByArt = new Map<string, number>();
-    const resolveRemainingQty = (artNo: string, fromBranch: string) => {
-      const key = `${String(artNo || "").trim().toUpperCase()}|${String(fromBranch || "").trim().toUpperCase()}`;
-      if (!remainingByArt.has(key)) {
-        const record = inventoryRows.find((item) => String(item.art_no || "").trim().toUpperCase() === String(artNo || "").trim().toUpperCase()) || null;
-        remainingByArt.set(key, getBranchAvailableQty(record, fromBranch));
-      }
-      return remainingByArt.get(key) || 0;
-    };
-    const invalidRow = pendingTransfers.find((row) => {
-      const remainingQty = resolveRemainingQty(row.lookup, row.from_branch);
-      const requestQty = Number(row.qty || 0);
-      if (remainingQty <= 0 || requestQty > remainingQty) return true;
-      const key = `${String(row.lookup || "").trim().toUpperCase()}|${String(row.from_branch || "").trim().toUpperCase()}`;
-      remainingByArt.set(key, remainingQty - requestQty);
-      return false;
-    });
-    if (invalidRow) {
-      const record = inventoryRows.find((item) => String(item.art_no || "").trim().toUpperCase() === String(invalidRow.lookup || "").trim().toUpperCase()) || null;
-      const availableQty = getBranchAvailableQty(record, invalidRow.from_branch);
-      setMovementError(
-        availableQty <= 0
-          ? `No stock available in ${invalidRow.from_branch} for ${invalidRow.lookup}`
-          : `Only ${availableQty} Qty available in ${invalidRow.from_branch} for ${invalidRow.lookup}`
-      );
-      setMovementQtyRejected(true);
-      setMovementQty("");
-      return;
-    }
     setLoading(true);
     setError("");
     try {
+      const queuedRows = pendingTransfers
+        .map((row) => normalizePendingTransfer(row))
+        .filter((row) => row.lookup && row.from_branch && row.to_branch && Number.isFinite(row.qty) && row.qty > 0);
+
+      if (!queuedRows.length) {
+        setMovementError("No valid pending rows to transfer. Add a fresh row and try again.");
+        setMovementQtyRejected(true);
+        setStatus("Transfer skipped: no valid queued rows");
+        return;
+      }
+
       const committedAt = new Date().toISOString();
       const committedMoves: MoveRow[] = [];
-      for (const row of pendingTransfers) {
-        const result = await api<{
-          move?: MoveRow;
-          moves?: MoveRow[];
-        }>(
-          "/stock/transfers",
-          token,
-          {
-            method: "POST",
-            body: JSON.stringify({
-              lookup: row.lookup,
-              art_no: row.lookup,
-              from_branch: row.from_branch,
-              branch: row.from_branch,
-              note: row.note,
-              transfers: [
-                {
-                  from_branch: row.from_branch,
-                  to_branch: row.to_branch,
-                  qty: row.qty,
-                },
-              ],
-            }),
-          },
-        );
-        const syntheticMove: MoveRow = {
-          created_at: row.transfer_date ? `${row.transfer_date}T00:00:00` : committedAt,
-          art_no: row.lookup,
-          category: inventoryRows.find((item) => String(item.art_no || "").trim().toUpperCase() === String(row.lookup || "").trim().toUpperCase())?.category,
-          item_name: inventoryRows.find((item) => String(item.art_no || "").trim().toUpperCase() === String(row.lookup || "").trim().toUpperCase())?.item_name,
-          mtype: "transfer",
-          qty: row.qty,
-          from_p: row.from_branch,
-          from_branch: row.from_branch,
-          to_p: row.to_branch,
-          to_branch: row.to_branch,
-          note: row.note,
-        };
-        committedMoves.push(syntheticMove);
-        if (result.move) committedMoves.push(result.move);
-        if (Array.isArray(result.moves) && result.moves.length) committedMoves.push(...result.moves);
+      const successfulIds = new Set<number>();
+      const failedRows: Array<{ row: PendingTransferRow; reason: string }> = [];
+      setStatus(`Transferring ${queuedRows.length} queued row${queuedRows.length === 1 ? "" : "s"}...`);
+
+      const transferOneRow = async (row: PendingTransferRow) => {
+        const controller = new AbortController();
+        const timeoutId = window.setTimeout(() => controller.abort(), 20000);
+        try {
+          const result = await api<{
+            move?: MoveRow;
+            moves?: MoveRow[];
+          }>(
+            "/stock/transfers",
+            token,
+            {
+              method: "POST",
+              signal: controller.signal,
+              body: JSON.stringify({
+                lookup: row.lookup,
+                art_no: row.lookup,
+                from_branch: row.from_branch,
+                branch: row.from_branch,
+                note: row.note,
+                transfers: [
+                  {
+                    from_branch: row.from_branch,
+                    to_branch: row.to_branch,
+                    qty: row.qty,
+                  },
+                ],
+              }),
+            },
+          );
+          return { row, result };
+        } finally {
+          window.clearTimeout(timeoutId);
+        }
+      };
+
+      const results = await Promise.allSettled(queuedRows.map((row) => transferOneRow(row)));
+      for (const outcome of results) {
+        if (outcome.status === "fulfilled") {
+          const { row, result } = outcome.value;
+          successfulIds.add(row.id);
+          const syntheticMove: MoveRow = {
+            created_at: row.transfer_date ? `${row.transfer_date}T00:00:00` : committedAt,
+            art_no: row.lookup,
+            category: inventoryRows.find((item) => String(item.art_no || "").trim().toUpperCase() === String(row.lookup || "").trim().toUpperCase())?.category,
+            item_name: inventoryRows.find((item) => String(item.art_no || "").trim().toUpperCase() === String(row.lookup || "").trim().toUpperCase())?.item_name,
+            mtype: "transfer",
+            qty: row.qty,
+            from_p: row.from_branch,
+            from_branch: row.from_branch,
+            to_p: row.to_branch,
+            to_branch: row.to_branch,
+            note: row.note,
+          };
+          committedMoves.push(syntheticMove);
+          if (result.move) committedMoves.push(result.move);
+          if (Array.isArray(result.moves) && result.moves.length) committedMoves.push(...result.moves);
+        } else {
+          const reason =
+            outcome.reason instanceof ApiError
+              ? outcome.reason.message
+              : outcome.reason instanceof Error
+                ? outcome.reason.message
+                : "Transfer failed";
+          const failedRow = queuedRows.find((row) => !successfulIds.has(row.id) && !failedRows.some((item) => item.row.id === row.id));
+          if (failedRow) failedRows.push({ row: failedRow, reason });
+        }
       }
+
       setInventoryRows((current) =>
         current.map((row) => {
           const currentArt = String(row.art_no || "").trim().toUpperCase();
-          const matches = pendingTransfers.filter((pending) => String(pending.lookup || "").trim().toUpperCase() === currentArt);
+          const matches = queuedRows.filter((pending) => String(pending.lookup || "").trim().toUpperCase() === currentArt && successfulIds.has(pending.id));
           if (!matches.length) return row;
           return matches.reduce(
             (nextRow, match) =>
@@ -1492,18 +1595,32 @@ export default function Home() {
           ...current,
         ]);
       }
-      setPendingTransfers([]);
-      setSelectedPendingIds(new Set());
+      setPendingTransfers((current) => current.filter((row) => !successfulIds.has(row.id)));
+      window.sessionStorage.removeItem(STORAGE_KEYS.pendingTransfers);
+      setSelectedPendingIds((current) => {
+        const next = new Set(current);
+        successfulIds.forEach((id) => next.delete(id));
+        return next;
+      });
       setMovementError("");
-      setStatus(`Transferred ${pendingTransfers.length} queued row${pendingTransfers.length === 1 ? "" : "s"}`);
+      const successCount = successfulIds.size;
+      if (failedRows.length) {
+        const preview = failedRows.slice(0, 3).map(({ row, reason }) => `${row.lookup} (${reason})`).join(" | ");
+        setStatus(`Transferred ${successCount} row${successCount === 1 ? "" : "s"}; ${failedRows.length} failed: ${preview}`);
+        setMovementError(`Some rows failed: ${preview}`);
+        setMovementQtyRejected(true);
+      } else {
+        setStatus(`Transferred ${successCount} queued row${successCount === 1 ? "" : "s"}`);
+      }
       setMovesExpanded(true);
-      showTransferSuccessPopup(`Transferred ${pendingTransfers.length} queued row${pendingTransfers.length === 1 ? "" : "s"}. The pending queue is now clear.`);
+      showTransferSuccessPopup(`Transferred ${successCount} queued row${successCount === 1 ? "" : "s"}.${failedRows.length ? ` ${failedRows.length} row${failedRows.length === 1 ? "" : "s"} failed.` : " The pending queue is now clear."}`);
       await refreshAll();
     } catch (err) {
       const message = err instanceof ApiError ? err.message : err instanceof Error ? err.message : "Transfer failed";
       setMovementError(message);
       setMovementQtyRejected(true);
       setError(message);
+      setStatus(`Transfer failed: ${message}`);
     } finally {
       setLoading(false);
     }

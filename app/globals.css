@@ -346,6 +346,13 @@ h1, h2, h3, p {
   border-radius: 0 0 16px 16px;
 }
 
+.footer-status-bar--error {
+  color: #8b1f1f;
+  background: rgba(255, 233, 233, 0.95);
+  border-top-color: rgba(214, 95, 95, 0.45);
+  font-weight: 700;
+}
+
 .art-number-content {
   min-width: 0;
   padding-right: 4px;
