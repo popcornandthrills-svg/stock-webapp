@@ -972,6 +972,12 @@ def moves(
 ):
     branch_name, branch_id = branch_context(branch, user)
     rows = db.moves(limit=limit, branch_id=branch_id)
+    excluded_types = {"sale", "sales_load", "sales"}
+    rows = [
+        row
+        for row in rows
+        if str(row.get("mtype") or row.get("type") or "").strip().lower() not in excluded_types
+    ]
     if art_no:
         art = str(art_no or "").strip().upper()
         rows = [
