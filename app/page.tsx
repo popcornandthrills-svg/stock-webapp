@@ -2350,24 +2350,31 @@ export default function Home() {
       });
       return;
     }
-    try {
-      await api("/inventory/items", token, {
-        method: "POST",
-        body: JSON.stringify(payload),
-      });
-    } catch (createErr) {
-      await api("/inventory/items", token, {
-        method: "PUT",
-        body: JSON.stringify(payload),
-      }).catch(() => {
-        throw createErr;
-        });
-    }
     applyInventoryPayloadLocally(payload);
     appendLocalAuditHistory(payload, inventoryRows.some((row) => String(row.art_no || "").trim().toUpperCase() === normalizedArtNo) ? "updated" : "created");
     setStatus(`Item saved to backend for ${branchName}.`);
     void refreshAll().catch(() => {
       // Keep the optimistic row visible even if a refresh is slow or temporarily fails.
+    });
+    void (async () => {
+      try {
+        await api("/inventory/items", token, {
+          method: "POST",
+          body: JSON.stringify(payload),
+        });
+      } catch (createErr) {
+        await api("/inventory/items", token, {
+          method: "PUT",
+          body: JSON.stringify(payload),
+        }).catch(() => {
+          throw createErr;
+        });
+      }
+      await refreshAll().catch(() => {
+        // Keep the optimistic row visible even if a refresh is slow or temporarily fails.
+      });
+    })().catch((err) => {
+      setError(err instanceof Error ? err.message : "Item save failed");
     });
   }
 
