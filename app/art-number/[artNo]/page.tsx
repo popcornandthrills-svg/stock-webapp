@@ -299,7 +299,7 @@ export default function ArtNumberDetailsPage() {
         const storedInventoryRows = readLocalRecordArray<AnyRecord>(LOCAL_INVENTORY_KEY);
         const storedMoveRows = readLocalRecordArray<AnyRecord>(LOCAL_MOVES_KEY);
         const storedAuditRows = readLocalAuditHistory() as AnyRecord[];
-        const bootstrapResponse = await fetch("/api/bootstrap", { cache: "no-store" }).catch(() => null);
+        const bootstrapResponse = await fetchWithTimeout("/api/bootstrap", { cache: "no-store" }, 3000).catch(() => null);
         const bootstrapJson = bootstrapResponse?.ok ? await bootstrapResponse.json().catch(() => ({})) : {};
         bootstrapCacheRef.current = {
           inventory: Array.isArray(bootstrapJson?.inventory) && bootstrapJson.inventory.length ? bootstrapJson.inventory : storedInventoryRows,
