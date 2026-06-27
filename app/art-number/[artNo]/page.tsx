@@ -307,6 +307,20 @@ export default function ArtNumberDetailsPage() {
           audit: Array.isArray(bootstrapJson?.audit) && bootstrapJson.audit.length ? bootstrapJson.audit : storedAuditRows,
         };
 
+        const initialInventoryMatch =
+          storedInventoryRows.find((row: AnyRecord) => matchesArtNo(deepFindValue(row, "art_no", "ART_NO", "Art No", "Art Number"), artNo)) ||
+          bootstrapCacheRef.current.inventory.find((row: AnyRecord) => matchesArtNo(deepFindValue(row, "art_no", "ART_NO", "Art No", "Art Number"), artNo)) ||
+          {};
+        const initialMoveMatch =
+          storedMoveRows.find((row: AnyRecord) => matchesArtNo(deepFindValue(row, "art_no", "ART_NO", "Art No", "lookup"), artNo)) ||
+          bootstrapCacheRef.current.moves.find((row: AnyRecord) => matchesArtNo(deepFindValue(row, "art_no", "ART_NO", "Art No", "lookup"), artNo)) ||
+          {};
+        const initialItem = normalizeItem(initialInventoryMatch, initialMoveMatch);
+        if (initialItem.art_no || initialItem.item_name || initialItem.category || Number(initialItem.available_qty || 0) > 0) {
+          setItem(initialItem);
+          setLoading(false);
+        }
+
         const [itemRes, historyRes, lookupRes, movesRes] = await Promise.all([
           fetchWithTimeout(apiUrl(`/inventory/item-by-art/${encodeURIComponent(artNo)}`), {
             cache: "no-store",
