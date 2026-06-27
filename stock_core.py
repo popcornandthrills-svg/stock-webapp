@@ -729,6 +729,15 @@ class DB:
             return None
         with self.c() as db:
             row = db.execute("SELECT * FROM items WHERE art_no=?", (key,)).fetchone()
+            if not row:
+                try:
+                    row = self.find_item(db, key)
+                except ValueError:
+                    row = None
+            if not row:
+                lookup = self.lookup_stock(key, 1)
+                if lookup:
+                    row = db.execute("SELECT * FROM items WHERE id=?", (int(lookup["id"]),)).fetchone()
         return dict(row) if row else None
 
     def delete_item(self, item_id):

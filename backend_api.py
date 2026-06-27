@@ -33,6 +33,7 @@ DATABASE_URL = str(os.getenv("DATABASE_URL", "") or "").strip()
 API_DB_PATH = Path(os.getenv("STOCK_DB_PATH", str(DB_PATH))).expanduser().resolve()
 API_SECRET_KEY = os.getenv("API_SECRET_KEY", "goldprince-api-secret-change-me")
 API_TOKEN_HOURS = int(os.getenv("API_TOKEN_HOURS", "12") or "12")
+API_DB_SOURCE = "postgres" if DATABASE_URL else "sqlite"
 ACCOUNTS_FILE = Path(__file__).resolve().parent / "data" / "accounts.json"
 
 if DATABASE_URL:
@@ -316,6 +317,39 @@ def branch_context(requested_branch, user: CurrentUser, default_admin_to_ho=Fals
     return None, None
 
 
+def enrich_item_from_moves(art_no: str, base_row: Optional[dict] = None):
+    art = str(art_no or "").strip().upper()
+    if not art:
+        return base_row or None
+    row = dict(base_row or {})
+    try:
+        recent_moves = db.moves(limit=20, art_no=art)
+    except Exception:
+        recent_moves = []
+    latest_move = next((m for m in recent_moves if str(m.get("art_no") or "").strip().upper() == art), None)
+    if latest_move:
+        row.setdefault("art_no", art)
+        if not str(row.get("item_name") or "").strip():
+            row["item_name"] = str(latest_move.get("item_name") or "").strip()
+        if not str(row.get("category") or "").strip():
+            row["category"] = str(latest_move.get("category") or "").strip()
+        if not str(row.get("created_at") or "").strip():
+            row["created_at"] = str(latest_move.get("created_at") or "").strip()
+        if not str(row.get("updated_at") or "").strip():
+            row["updated_at"] = str(latest_move.get("created_at") or "").strip()
+    try:
+        lookup_row = db.lookup_stock(art, 1)
+    except Exception:
+        lookup_row = None
+    if lookup_row:
+        row.setdefault("art_no", art)
+        if not str(row.get("item_name") or "").strip():
+            row["item_name"] = str(lookup_row.get("item_name") or "").strip()
+        if not str(row.get("available_qty") or "").strip():
+            row["available_qty"] = int(lookup_row.get("point_qty") or 0)
+    return row or None
+
+
 def billing_timestamp(raw_date):
     for fmt in ("%d-%m-%Y", "%Y-%m-%d"):
         try:
@@ -487,6 +521,7 @@ def root():
         "name": "GOLDPRINCE Stock Management API",
         "docs_url": "/docs",
         "redoc_url": "/redoc",
+        "database_source": API_DB_SOURCE,
         "database_path": str(API_DB_PATH),
     }
 
@@ -738,7 +773,13 @@ def inventory_summary(branch: Optional[str] = None, user: CurrentUser = Depends(
 def inventory_item_by_art(art_no: str, _user: CurrentUser = Depends(get_current_user)):
     row = db.item_by_art(art_no)
     if not row:
+        row = enrich_item_from_moves(art_no)
+    else:
+        row = enrich_item_from_moves(art_no, row)
+    if not row:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Item not found")
+    row.setdefault("database_source", API_DB_SOURCE)
+    row.setdefault("database_path", str(API_DB_PATH))
     return row
 
 
@@ -767,9 +808,19 @@ def inventory_item_form_by_art(art_no: str, user: CurrentUser = Depends(get_curr
 def inventory_item_history(art_no: str, user: CurrentUser = Depends(get_current_user)):
     item = db.item_by_art(art_no)
     if not item:
+        item = enrich_item_from_moves(art_no)
+    if not item:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Item not found")
+    move_rows = db.moves(limit=200)
+    move_rows = [
+        row
+        for row in move_rows
+        if str(row.get("art_no") or "").strip().upper() == str(art_no or "").strip().upper()
+        or str(art_no or "").strip().upper() in str(row.get("note") or "").upper()
+    ]
     return {
         "item": item,
+        "moves": move_rows,
         "history": db.recent_audit_logs_for_art(art_no, limit=200) if user.is_admin else [],
     }
 
@@ -949,13 +1000,15 @@ def moves(
     user: CurrentUser = Depends(get_current_user),
 ):
     branch_name, branch_id = branch_context(branch, user)
-    rows = db.moves(limit=limit, branch_id=branch_id, art_no=art_no)
-    transfer_types = {"transfer", "branch_transfer"}
-    rows = [
-        row
-        for row in rows
-        if str(row.get("mtype") or row.get("type") or "").strip().lower() in transfer_types
-    ]
+    rows = db.moves(limit=limit, branch_id=branch_id)
+    if art_no:
+        art = str(art_no or "").strip().upper()
+        rows = [
+            row
+            for row in rows
+            if art == str(row.get("art_no") or "").strip().upper()
+            or art in str(row.get("note") or "").upper()
+        ]
     return {"branch": branch_name or "All", "count": len(rows), "moves": rows}
 
 

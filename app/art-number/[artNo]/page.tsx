@@ -1,12 +1,14 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { PDFDocument, StandardFonts, rgb } from "pdf-lib";
 import { useParams, useRouter } from "next/navigation";
 import { AppLayout } from "../../components/AppLayout";
 
 const API_URL = "/api/backend";
 const LOCAL_AUDIT_KEY = "goldprince.auditHistory";
+const LOCAL_INVENTORY_KEY = "goldprince.inventoryRows";
+const LOCAL_MOVES_KEY = "goldprince.movesRows";
 const AUTH_STORAGE_KEYS = {
   token: "goldprince.token",
   role: "goldprince.role",
@@ -116,14 +118,14 @@ function parseAuditMoveRow(row: AnyRecord, artNo: string): MoveRow | null {
   const note = String(row.note || "");
   const event = String(row.event_type || "");
   const art = String(artNo || "").trim().toUpperCase();
-  const relevant = /transfer|stock movement|branch transfer|branch_transfer/i.test(note) || /transfer|move|stock/i.test(event);
-  if (!relevant || !note.toUpperCase().includes(art)) return null;
-  const fromMatch = note.match(/\bfrom\s+([A-Z0-9 ._-]+?)(?:\s+to\b|\s+\|)/i);
+  const relevant = /transfer|stock movement|branch transfer|branch_transfer|move|inventory|sales load/i.test(note) || /transfer|move|stock|inventory/i.test(event);
+  if (!note.toUpperCase().includes(art) || !relevant) return null;
+  const fromMatch = note.match(/\bfrom\s+([A-Z0-9 ._-]+?)(?:\s+to\b|\s+\||\s+qty\b|\s+note\b|$)/i);
   const toMatch = note.match(/\bto\s+([A-Z0-9 ._-]+?)(?:\s+\||\s+qty\b|\s+note\b|$)/i);
-  const qtyMatch = note.match(/\bqty[:\s]+(\d+(?:\.\d+)?)/i);
+  const qtyMatch = note.match(/\bqty[:\s]+(\d+(?:\.\d+)?)/i) || note.match(/\bquantity[:\s]+(\d+(?:\.\d+)?)/i);
   return {
     created_at: String(row.created_at || ""),
-    mtype: /branch transfer/i.test(note) ? "branch_transfer" : /sale/i.test(note) ? "sale" : "transfer",
+    mtype: /branch transfer/i.test(note) ? "branch_transfer" : /sale/i.test(note) ? "sale" : /inventory/i.test(note) ? "inventory" : "transfer",
     qty: qtyMatch ? Number(qtyMatch[1]) : 0,
     from_p: fromMatch ? fromMatch[1].trim() : "",
     to_p: toMatch ? toMatch[1].trim() : "",
@@ -162,6 +164,18 @@ function readLocalAuditHistory(): AuditRow[] {
   }
 }
 
+function readLocalRecordArray<T>(key: string): T[] {
+  if (typeof window === "undefined") return [];
+  try {
+    const raw = window.localStorage.getItem(key);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw) as unknown;
+    return Array.isArray(parsed) ? (parsed as T[]) : [];
+  } catch {
+    return [];
+  }
+}
+
 function readStoredToken(key: string) {
   if (typeof window === "undefined") return "";
   try {
@@ -188,6 +202,14 @@ function downloadTextFile(filename: string, content: string, type = "text/plain;
   link.download = filename;
   link.click();
   URL.revokeObjectURL(url);
+}
+
+function fetchWithTimeout(input: RequestInfo | URL, init: RequestInit = {}, timeoutMs = 8000) {
+  const controller = new AbortController();
+  const timer = window.setTimeout(() => controller.abort(), timeoutMs);
+  return fetch(input, { ...init, signal: controller.signal }).finally(() => {
+    window.clearTimeout(timer);
+  });
 }
 
 function excelSafeDate(value?: string) {
@@ -235,6 +257,11 @@ export default function ArtNumberDetailsPage() {
   const [history, setHistory] = useState<AuditRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const bootstrapCacheRef = useRef<{ inventory: AnyRecord[]; moves: AnyRecord[]; audit: AnyRecord[] }>({
+    inventory: [],
+    moves: [],
+    audit: [],
+  });
 
   useEffect(() => {
     let cancelled = false;
@@ -263,39 +290,51 @@ export default function ArtNumberDetailsPage() {
   useEffect(() => {
     if (!artNo || !token) return;
     let cancelled = false;
+    let refreshTimer: number | null = null;
 
     async function load() {
       setLoading(true);
       setError("");
       try {
+        const storedInventoryRows = readLocalRecordArray<AnyRecord>(LOCAL_INVENTORY_KEY);
+        const storedMoveRows = readLocalRecordArray<AnyRecord>(LOCAL_MOVES_KEY);
+        const storedAuditRows = readLocalAuditHistory() as AnyRecord[];
+        const bootstrapResponse = await fetch("/api/bootstrap", { cache: "no-store" }).catch(() => null);
+        const bootstrapJson = bootstrapResponse?.ok ? await bootstrapResponse.json().catch(() => ({})) : {};
+        bootstrapCacheRef.current = {
+          inventory: Array.isArray(bootstrapJson?.inventory) && bootstrapJson.inventory.length ? bootstrapJson.inventory : storedInventoryRows,
+          moves: Array.isArray(bootstrapJson?.moves) && bootstrapJson.moves.length ? bootstrapJson.moves : storedMoveRows,
+          audit: Array.isArray(bootstrapJson?.audit) && bootstrapJson.audit.length ? bootstrapJson.audit : storedAuditRows,
+        };
+
         const [itemRes, historyRes, lookupRes, inventoryRes, movesRes, auditRes] = await Promise.all([
-          fetch(apiUrl(`/inventory/item-by-art/${encodeURIComponent(artNo)}`), {
+          fetchWithTimeout(apiUrl(`/inventory/item-by-art/${encodeURIComponent(artNo)}`), {
             cache: "no-store",
             headers: { Authorization: `Bearer ${token}` },
-          }),
-          fetch(apiUrl(`/inventory/item-history/${encodeURIComponent(artNo)}`), {
+          }, 8000),
+          fetchWithTimeout(apiUrl(`/inventory/item-history/${encodeURIComponent(artNo)}`), {
             cache: "no-store",
             headers: { Authorization: `Bearer ${token}` },
-          }),
-          fetch(apiUrl(`/stock/lookup?lookup=${encodeURIComponent(artNo)}`), {
+          }, 8000),
+          fetchWithTimeout(apiUrl(`/stock/lookup?lookup=${encodeURIComponent(artNo)}`), {
             cache: "no-store",
             headers: { Authorization: `Bearer ${token}` },
-          }),
-          fetch(apiUrl(`/inventory?limit=1000&search=${encodeURIComponent(artNo)}`), {
+          }, 8000),
+          fetchWithTimeout(apiUrl(`/inventory?limit=1000&search=${encodeURIComponent(artNo)}`), {
             cache: "no-store",
             headers: { Authorization: `Bearer ${token}` },
-          }),
-          fetch(apiUrl(`/moves?limit=1000&art_no=${encodeURIComponent(artNo)}`), {
+          }, 8000),
+          fetchWithTimeout(apiUrl(`/moves?limit=1000&art_no=${encodeURIComponent(artNo)}`), {
             // Ask the backend for this art number directly so older movements are not lost
             // when the global recent-moves slice is shorter than the item's history.
             // The backend still returns branch-scoped results based on the admin token.
             cache: "no-store",
             headers: { Authorization: `Bearer ${token}` },
-          }),
-          fetch(apiUrl(`/audit-logs?limit=300`), {
+          }, 8000),
+          fetchWithTimeout(apiUrl(`/audit-logs?limit=300`), {
             cache: "no-store",
             headers: { Authorization: `Bearer ${token}` },
-          }),
+          }, 8000).catch(() => new Response(JSON.stringify({ items: [] }), { status: 200 })),
         ]);
 
         const [itemJson, historyJson, lookupJson, inventoryJson, movesJson, auditJson] = await Promise.all([
@@ -316,36 +355,25 @@ export default function ArtNumberDetailsPage() {
             : Array.isArray(inventoryJson)
               ? inventoryJson
               : [];
+        const bootstrapInventoryRows = bootstrapCacheRef.current.inventory;
+        const bootstrapMoveRows = bootstrapCacheRef.current.moves;
+        const bootstrapAuditRows = bootstrapCacheRef.current.audit;
 
         const inventoryMatch =
-          inventoryRows.find((row: AnyRecord) => String(deepFindValue(row, "art_no", "ART_NO", "Art No", "Art Number") || "").trim().toUpperCase() === artNo.toUpperCase()) || {};
+          inventoryRows.find((row: AnyRecord) => String(deepFindValue(row, "art_no", "ART_NO", "Art No", "Art Number") || "").trim().toUpperCase() === artNo.toUpperCase()) ||
+          bootstrapInventoryRows.find((row: AnyRecord) => String(deepFindValue(row, "art_no", "ART_NO", "Art No", "Art Number") || "").trim().toUpperCase() === artNo.toUpperCase()) ||
+          {};
 
-        const lookupItem = asRecord(lookupJson?.item || lookupJson);
-        const source = normalizeItem(inventoryMatch, itemJson, lookupJson, lookupItem);
-
-        setItem({
-          ...source,
-          art_no: source.art_no || artNo,
-          item_name:
-            source.item_name ||
-            String(deepFindValue(lookupJson, "item_name", "Item Name", "item") || deepFindValue(itemJson, "item_name", "Item Name", "item") || ""),
-          category: source.category || String(deepFindValue(lookupJson, "category", "Category") || deepFindValue(itemJson, "category", "Category") || ""),
-          available_qty:
-            Number(
-              deepFindValue(lookupJson, "available_qty", "AVAILABLE_QTY", "qty", "QTY") ??
-                deepFindValue(inventoryMatch, "available_qty", "AVAILABLE_QTY", "qty", "QTY") ??
-                source.available_qty ??
-                0
-            ),
-          wholesale: Number(deepFindValue(lookupJson, "wholesale", "WHOLESALE", "Wholesale", "wholesale_price") || source.wholesale || 0),
-          branch: String(deepFindValue(lookupJson, "branch", "BRANCH") || source.branch || ""),
-          description: source.description || String(deepFindValue(lookupJson, "description", "Description") || deepFindValue(itemJson, "description", "Description") || ""),
-          by: asRecord(deepFindValue(lookupJson, "by", "BY", "branch_qty", "branchQty") || deepFindValue(itemJson, "by", "BY", "branch_qty", "branchQty") || source.by || {}),
-        });
-
-        const rows = Array.isArray(movesJson?.moves) ? movesJson.moves : [];
-        const auditRows = Array.isArray((auditJson as AnyRecord)?.items) ? (auditJson as AnyRecord).items : [];
-        const moveRows = rows.filter((row: MoveRow) => matchesArtNo(deepFindValue(row, "art_no", "ART_NO", "Art No"), artNo));
+        const historyMoveRows = Array.isArray((historyJson as AnyRecord)?.moves) ? (historyJson as AnyRecord).moves : [];
+        const rows = Array.isArray(movesJson?.moves) && movesJson.moves.length
+          ? movesJson.moves
+          : historyMoveRows.length
+            ? historyMoveRows
+            : bootstrapMoveRows;
+        const auditRows = Array.isArray((auditJson as AnyRecord)?.items) && (auditJson as AnyRecord).items.length
+          ? (auditJson as AnyRecord).items
+          : bootstrapAuditRows;
+        const moveRows = rows.filter((row: MoveRow) => matchesArtNo(deepFindValue(row, "art_no", "ART_NO", "Art No", "lookup"), artNo));
         const auditMoveRows = auditRows
           .map((row: AnyRecord) => parseAuditMoveRow(row, artNo))
           .filter((row): row is MoveRow => Boolean(row));
@@ -356,6 +384,76 @@ export default function ArtNumberDetailsPage() {
             return itemKey === key;
           });
         });
+        const lookupItem = asRecord(lookupJson?.item || lookupJson);
+        const bootstrapLookupItem = asRecord(
+          bootstrapInventoryRows.find((row: AnyRecord) => String(deepFindValue(row, "art_no", "ART_NO", "Art No", "Art Number") || "").trim().toUpperCase() === artNo.toUpperCase()) ||
+            bootstrapMoveRows.find((row: AnyRecord) => matchesArtNo(deepFindValue(row, "art_no", "ART_NO", "Art No", "lookup"), artNo)) ||
+            {}
+        );
+        const fallbackMove = moveRows[0] || auditMoveRows[0] || rows[0] || {};
+        const bootstrapFallbackMove = bootstrapMoveRows.find((row: AnyRecord) => matchesArtNo(deepFindValue(row, "art_no", "ART_NO", "Art No", "lookup"), artNo)) || {};
+        const storedFallbackMove = storedMoveRows.find((row: AnyRecord) => matchesArtNo(deepFindValue(row, "art_no", "ART_NO", "Art No", "lookup"), artNo)) || {};
+        const storedLookupItem = asRecord(
+          storedInventoryRows.find((row: AnyRecord) => String(deepFindValue(row, "art_no", "ART_NO", "Art No", "Art Number") || "").trim().toUpperCase() === artNo.toUpperCase()) || {}
+        );
+        const source = normalizeItem(
+          inventoryMatch,
+          bootstrapLookupItem,
+          storedLookupItem,
+          itemJson,
+          lookupJson,
+          lookupItem,
+          fallbackMove,
+          bootstrapFallbackMove,
+          storedFallbackMove
+        );
+        const moveBackfillName = String(deepFindValue(fallbackMove, "item_name", "Item Name", "item") || "");
+        const moveBackfillCategory = String(deepFindValue(fallbackMove, "category", "Category") || "");
+        const moveBackfillBranch = String(deepFindValue(fallbackMove, "branch", "BRANCH") || "");
+        const moveBackfillQty =
+          Number(deepFindValue(fallbackMove, "qty", "QTY", "quantity", "QUANTITY") || 0) ||
+          Number(deepFindValue(bootstrapFallbackMove, "qty", "QTY", "quantity", "QUANTITY") || 0) ||
+          Number(deepFindValue(storedFallbackMove, "qty", "QTY", "quantity", "QUANTITY") || 0) ||
+          Number(deepFindValue(lookupJson, "available_qty", "AVAILABLE_QTY", "qty", "QTY") || 0);
+        const moveBackfillArtNo = String(deepFindValue(fallbackMove, "art_no", "ART_NO", "lookup") || artNo);
+
+        setItem({
+          ...source,
+          art_no: source.art_no || moveBackfillArtNo || artNo,
+          item_name:
+            source.item_name ||
+            moveBackfillName ||
+            String(deepFindValue(bootstrapLookupItem, "item_name", "Item Name", "item") || "") ||
+            String(deepFindValue(storedLookupItem, "item_name", "Item Name", "item") || "") ||
+            String(deepFindValue(lookupJson, "item_name", "Item Name", "item") || deepFindValue(itemJson, "item_name", "Item Name", "item") || ""),
+          category:
+            source.category ||
+            moveBackfillCategory ||
+            String(deepFindValue(bootstrapLookupItem, "category", "Category") || "") ||
+            String(deepFindValue(storedLookupItem, "category", "Category") || "") ||
+            String(deepFindValue(lookupJson, "category", "Category") || deepFindValue(itemJson, "category", "Category") || ""),
+          available_qty:
+            Number(
+              deepFindValue(lookupJson, "available_qty", "AVAILABLE_QTY", "qty", "QTY") ??
+                deepFindValue(inventoryMatch, "available_qty", "AVAILABLE_QTY", "qty", "QTY") ??
+                deepFindValue(bootstrapLookupItem, "available_qty", "AVAILABLE_QTY", "qty", "QTY") ??
+                deepFindValue(storedLookupItem, "available_qty", "AVAILABLE_QTY", "qty", "QTY") ??
+                moveBackfillQty ??
+                source.available_qty ??
+                0
+            ),
+          wholesale: Number(deepFindValue(lookupJson, "wholesale", "WHOLESALE", "Wholesale", "wholesale_price") || source.wholesale || 0),
+          branch: String(deepFindValue(lookupJson, "branch", "BRANCH") || moveBackfillBranch || source.branch || ""),
+          description:
+            source.description ||
+            String(deepFindValue(bootstrapLookupItem, "description", "Description") || "") ||
+            String(deepFindValue(storedLookupItem, "description", "Description") || "") ||
+            String(deepFindValue(lookupJson, "description", "Description") || deepFindValue(itemJson, "description", "Description") || ""),
+          by: asRecord(deepFindValue(lookupJson, "by", "BY", "branch_qty", "branchQty") || deepFindValue(itemJson, "by", "BY", "branch_qty", "branchQty") || source.by || {}),
+        });
+        if (!source.art_no && !inventoryMatch && !lookupItem && !combinedMoves.length) {
+          setError(`ART NO ${artNo} was not found in the live backend data source.`);
+        }
         setMoves(combinedMoves.sort((a, b) => String(b.created_at || "").localeCompare(String(a.created_at || ""))));
         const historyRows = Array.isArray((historyJson as AnyRecord)?.history) ? (historyJson as AnyRecord).history : [];
         const localHistory = readLocalAuditHistory();
@@ -367,15 +465,37 @@ export default function ArtNumberDetailsPage() {
           .sort((a, b) => String(b.created_at || "").localeCompare(String(a.created_at || "")));
         setHistory(combined);
       } catch (err) {
-        if (!cancelled) setError(err instanceof Error ? err.message : "Failed to load art number details");
+        if (!cancelled) {
+          setError(err instanceof Error ? err.message : "Failed to load art number details");
+        }
       } finally {
         if (!cancelled) setLoading(false);
       }
     }
 
     load();
+    const scheduleRefresh = () => {
+      if (refreshTimer) {
+        window.clearTimeout(refreshTimer);
+      }
+      refreshTimer = window.setTimeout(() => {
+        void load();
+      }, 5000);
+    };
+    scheduleRefresh();
+    const onVisibilityChange = () => {
+      if (document.visibilityState === "visible") {
+        void load();
+        scheduleRefresh();
+      }
+    };
+    document.addEventListener("visibilitychange", onVisibilityChange);
     return () => {
       cancelled = true;
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+      if (refreshTimer) {
+        window.clearTimeout(refreshTimer);
+      }
     };
   }, [artNo, token]);
 

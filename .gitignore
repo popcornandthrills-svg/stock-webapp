@@ -34,3 +34,6 @@ Thumbs.db
 # Local database backups you do not want in Git
 stock.db.pre-restore.bak
 backup/*.zip
+
+.vercel
+.env*
