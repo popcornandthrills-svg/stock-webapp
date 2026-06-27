@@ -118,14 +118,14 @@ function parseAuditMoveRow(row: AnyRecord, artNo: string): MoveRow | null {
   const note = String(row.note || "");
   const event = String(row.event_type || "");
   const art = String(artNo || "").trim().toUpperCase();
-  const relevant = /transfer|stock movement|branch transfer|branch_transfer|move|inventory|sales load/i.test(note) || /transfer|move|stock|inventory/i.test(event);
+  const relevant = /transfer|stock movement|branch transfer|branch_transfer|move|inventory/i.test(note) || /transfer|move|stock|inventory/i.test(event);
   if (!note.toUpperCase().includes(art) || !relevant) return null;
   const fromMatch = note.match(/\bfrom\s+([A-Z0-9 ._-]+?)(?:\s+to\b|\s+\||\s+qty\b|\s+note\b|$)/i);
   const toMatch = note.match(/\bto\s+([A-Z0-9 ._-]+?)(?:\s+\||\s+qty\b|\s+note\b|$)/i);
   const qtyMatch = note.match(/\bqty[:\s]+(\d+(?:\.\d+)?)/i) || note.match(/\bquantity[:\s]+(\d+(?:\.\d+)?)/i);
   return {
     created_at: String(row.created_at || ""),
-    mtype: /branch transfer/i.test(note) ? "branch_transfer" : /sale/i.test(note) ? "sale" : /inventory/i.test(note) ? "inventory" : "transfer",
+    mtype: /branch transfer/i.test(note) ? "branch_transfer" : /inventory/i.test(note) ? "inventory" : "transfer",
     qty: qtyMatch ? Number(qtyMatch[1]) : 0,
     from_p: fromMatch ? fromMatch[1].trim() : "",
     to_p: toMatch ? toMatch[1].trim() : "",

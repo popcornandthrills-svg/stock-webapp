@@ -972,7 +972,7 @@ def moves(
 ):
     branch_name, branch_id = branch_context(branch, user)
     rows = db.moves(limit=limit, branch_id=branch_id)
-    excluded_types = {"sale", "sales_load", "sales"}
+    excluded_types = {"sale", "sales_load", "sales", "ho_in", "branch_load"}
     rows = [
         row
         for row in rows
