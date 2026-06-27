@@ -2374,8 +2374,8 @@ export default function Home() {
         // Keep the saved row visible even if a refresh is slow or temporarily fails.
       });
       setInventorySuccessPopup({
-        title: "Saved",
-        message: `ART NO ${normalizedArtNo} was saved successfully.`,
+        title: "Saved Successfully",
+        message: `ART NO ${normalizedArtNo} was saved to the backend database successfully.`,
       });
       if (inventorySuccessPopupTimerRef.current) {
         window.clearTimeout(inventorySuccessPopupTimerRef.current);
