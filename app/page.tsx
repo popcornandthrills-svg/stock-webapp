@@ -2354,19 +2354,10 @@ export default function Home() {
     }
     setStatus(`Saving ${normalizedArtNo} to backend for ${branchName}...`);
     try {
-      try {
-        await api("/inventory/items", token, {
-          method: "POST",
-          body: JSON.stringify(payload),
-        });
-      } catch (createErr) {
-        await api("/inventory/items", token, {
-          method: "PUT",
-          body: JSON.stringify(payload),
-        }).catch(() => {
-          throw createErr;
-        });
-      }
+      await api("/inventory/items", token, {
+        method: "POST",
+        body: JSON.stringify(payload),
+      });
       applyInventoryPayloadLocally(payload);
       appendLocalAuditHistory(payload, inventoryRows.some((row) => String(row.art_no || "").trim().toUpperCase() === normalizedArtNo) ? "updated" : "created");
       setStatus(`Item saved to backend for ${branchName}.`);
