@@ -576,6 +576,7 @@ export default function Home() {
   const [movementError, setMovementError] = useState("");
   const [movementPopup, setMovementPopup] = useState<{ title: string; message: string; confirm?: boolean } | null>(null);
   const [transferSuccessPopup, setTransferSuccessPopup] = useState<{ title: string; message: string } | null>(null);
+  const [inventorySuccessPopup, setInventorySuccessPopup] = useState<{ title: string; message: string } | null>(null);
   const [inventoryPopup, setInventoryPopup] = useState<{ title: string; message: string; confirm?: boolean } | null>(null);
   const [pendingInventoryPayload, setPendingInventoryPayload] = useState<any>(null);
   const [pendingInventoryExists, setPendingInventoryExists] = useState(false);
@@ -615,6 +616,7 @@ export default function Home() {
   const inventoryUploadPopupTimerRef = useRef<number | null>(null);
   const inventoryHighlightTimerRef = useRef<number | null>(null);
   const transferSuccessPopupTimerRef = useRef<number | null>(null);
+  const inventorySuccessPopupTimerRef = useRef<number | null>(null);
   const refreshInFlightRef = useRef(false);
   const pageSize = 20;
 
@@ -2371,6 +2373,17 @@ export default function Home() {
       await refreshAll().catch(() => {
         // Keep the saved row visible even if a refresh is slow or temporarily fails.
       });
+      setInventorySuccessPopup({
+        title: "Saved",
+        message: `ART NO ${normalizedArtNo} was saved successfully.`,
+      });
+      if (inventorySuccessPopupTimerRef.current) {
+        window.clearTimeout(inventorySuccessPopupTimerRef.current);
+      }
+      inventorySuccessPopupTimerRef.current = window.setTimeout(() => {
+        setInventorySuccessPopup(null);
+        inventorySuccessPopupTimerRef.current = null;
+      }, 4000);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Item save failed");
     }
@@ -2379,6 +2392,14 @@ export default function Home() {
   function dismissInventoryPopup() {
     setInventoryPopup(null);
     setPendingInventoryPayload(null);
+  }
+
+  function dismissInventorySuccessPopup() {
+    if (inventorySuccessPopupTimerRef.current) {
+      window.clearTimeout(inventorySuccessPopupTimerRef.current);
+      inventorySuccessPopupTimerRef.current = null;
+    }
+    setInventorySuccessPopup(null);
   }
 
   async function confirmInventoryPopup() {
@@ -3375,6 +3396,24 @@ export default function Home() {
                         OK
                       </button>
                     )}
+                  </div>
+                </div>
+              </div>
+            ) : null}
+            {inventorySuccessPopup ? (
+              <div className="inventory-dialog-backdrop" role="dialog" aria-modal="true" aria-labelledby="inventory-success-title">
+                <div className="system-dialog">
+                  <div className="system-dialog-title" id="inventory-success-title">
+                    {inventorySuccessPopup.title}
+                  </div>
+                  <div className="system-dialog-body">
+                    <div className="system-dialog-icon">✓</div>
+                    <div className="system-dialog-message">{inventorySuccessPopup.message}</div>
+                  </div>
+                  <div className="system-dialog-actions">
+                    <button className="primary-btn" type="button" onClick={dismissInventorySuccessPopup}>
+                      OK
+                    </button>
                   </div>
                 </div>
               </div>
