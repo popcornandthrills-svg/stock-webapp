@@ -963,35 +963,6 @@ def bulk_load_stock(payload: BulkLoadRequest, _user: CurrentUser = Depends(requi
     return {"status": "ok", "processed": ok, "failed": bad}
 
 
-@app.post("/sales/load")
-def sales_load(payload: SalesLoadRequest, _user: CurrentUser = Depends(require_admin)):
-    branch_id = branch_id_for_name(payload.branch)
-    ok, bad = db.import_sales_rows(
-        branch_id,
-        [row.model_dump() for row in payload.rows],
-        payload.sale_date,
-        source_name=payload.source_name.strip() or "Sales import",
-    )
-    for row in payload.rows:
-        art_no = str(row.art_no or "").strip().upper()
-        if not art_no:
-            continue
-        db.add_audit_log(
-            "sales_load",
-            "Admin",
-            actor_name="Admin",
-            branch_id=branch_id,
-            status="Success",
-            note=(
-                f"ART NO {art_no} sales load | Qty: {int(row.quantity or 0)} | "
-                f"Price: {float(row.price or 0):.2f} | Branch: {str(payload.branch).strip()} | "
-                f"Date: {str(payload.sale_date or '').strip()}"
-            ),
-            created_at=now_iso(),
-        )
-    return {"status": "ok", "processed": ok, "failed": bad}
-
-
 @app.get("/moves")
 def moves(
     branch: Optional[str] = None,
@@ -1017,7 +988,6 @@ def analytics(branch: Optional[str] = None, user: CurrentUser = Depends(get_curr
     branch_name, branch_id = branch_context(branch, user)
     return {
         "inventory": inventory_overview(branch_name),
-        "sales": db.sales_insights(branch_id if branch_name else None),
     }
 
 

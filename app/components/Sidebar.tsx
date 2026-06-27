@@ -14,7 +14,6 @@ type SidebarProps = {
 const tabs = [
   "inventory",
   "stock-movement",
-  "sales-load",
   "moves",
   "admin-panel",
 ];

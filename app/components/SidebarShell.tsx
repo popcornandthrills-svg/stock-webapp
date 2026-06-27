@@ -1,9 +1,9 @@
 "use client";
 
 type SidebarShellProps = {
-  active: "billing" | "sales-report" | "sales-due" | "returns" | "inventory" | "moves" | "stock-transfer" | "sales-load" | "analytics" | "managers" | "audit";
+  active: "billing" | "sales-report" | "sales-due" | "returns" | "inventory" | "moves" | "stock-transfer" | "analytics" | "managers" | "audit";
   onLogout: () => void;
-  onNavigate?: (view: "billing" | "sales-report" | "sales-due" | "returns" | "inventory" | "moves" | "stock-transfer" | "sales-load" | "analytics" | "managers" | "audit") => void;
+  onNavigate?: (view: "billing" | "sales-report" | "sales-due" | "returns" | "inventory" | "moves" | "stock-transfer" | "analytics" | "managers" | "audit") => void;
 };
 export function SidebarShell({ active, onLogout, onNavigate }: SidebarShellProps) {
   return (
@@ -29,7 +29,6 @@ export function SidebarShell({ active, onLogout, onNavigate }: SidebarShellProps
           <span className="nav-label">STOCK</span>
           <button className={`nav-item ${active === "inventory" ? "active" : ""}`} type="button" onClick={() => onNavigate?.("inventory")}>Inventory</button>
           <button className={`nav-item ${active === "stock-transfer" ? "active" : ""}`} type="button" onClick={() => onNavigate?.("stock-transfer")}>Stock Movement</button>
-          <button className={`nav-item ${active === "sales-load" ? "active" : ""}`} type="button" onClick={() => onNavigate?.("sales-load")}>Sales Load</button>
           <button className={`nav-item ${active === "moves" ? "active" : ""}`} type="button" onClick={() => onNavigate?.("moves")}>Moves</button>
           <button className={`nav-item ${active === "analytics" ? "active" : ""}`} type="button" onClick={() => onNavigate?.("analytics")}>Stock Analytics</button>
         </div>

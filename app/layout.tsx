@@ -7,7 +7,7 @@ export const metadata: Metadata = {
     default: "Stock Module Web",
     template: "%s | Stock Module Web",
   },
-  description: "Stock-only webapp for inventory, transfers, sales load, and moves.",
+  description: "Stock-only webapp for inventory, transfers, and moves.",
 };
 
 export default function RootLayout({ children }: Readonly<{ children: ReactNode }>) {

@@ -128,7 +128,7 @@ type AuditRow = {
 
 const API_URL = "/api/backend";
 const branchOptions = ["H.O", "GPH", "GPC", "GPF", "GPS", "MGP", "AMARAVATHI", "KALIMATA", "NAVISHKA"];
-const tabs = ["inventory", "inventory-upload", "stock-movement", "sales-load", "moves", "admin-panel"] as const;
+const tabs = ["inventory", "inventory-upload", "stock-movement", "moves", "admin-panel"] as const;
 type AppTab = (typeof tabs)[number];
 const inventoryColumns = ["H.O", "GPH", "GPC", "GPF", "MGP", "GPS", "AMARAVATHI", "KALIMATA", "NAVISHKA"];
 const STORAGE_KEYS = {
@@ -588,13 +588,6 @@ export default function Home() {
   const [bulkStockTo, setBulkStockTo] = useState("GPH");
   const [bulkStockLoading, setBulkStockLoading] = useState(false);
   const [bulkStockPopup, setBulkStockPopup] = useState<{ title: string; message: string; confirm?: boolean } | null>(null);
-  const [salesBranch, setSalesBranch] = useState("H.O");
-  const [salesDate, setSalesDate] = useState("");
-  const [salesText, setSalesText] = useState("");
-  const [salesFileName, setSalesFileName] = useState("");
-  const [salesFileRows, setSalesFileRows] = useState<Array<{ row_no: number; art_no: string; item_name: string; price: number; quantity: number }>>([]);
-  const [salesFileLoading, setSalesFileLoading] = useState(false);
-  const [salesLoadError, setSalesLoadError] = useState("");
   const [scanText, setScanText] = useState("");
   const [scanStatus, setScanStatus] = useState("No scan yet");
   const [addDate, setAddDate] = useState("");
@@ -1884,107 +1877,6 @@ export default function Home() {
     }
   }
 
-  async function handleSalesFilePick(file: File | null) {
-    if (!file) return;
-    setSalesFileName(file.name);
-    setError("");
-    setSalesLoadError("");
-    try {
-      const XLSX = await import("xlsx");
-      const buffer = await file.arrayBuffer();
-      const workbook = XLSX.read(buffer, { type: "array" });
-      const firstSheet = workbook.SheetNames[0];
-      if (!firstSheet) {
-        setSalesFileRows([]);
-        setSalesLoadError("Sales file has no usable worksheet");
-        return;
-      }
-      const sheet = workbook.Sheets[firstSheet];
-      const json = XLSX.utils.sheet_to_json<Record<string, any>>(sheet, { defval: "" });
-      const rows = normalizeSalesRows(json);
-      if (!rows.length) {
-        setSalesFileRows([]);
-        setSalesLoadError("No usable rows found. Required columns: ITEM NAME, ART NO, PRICE, QUANTITY.");
-        return;
-      }
-      const invalidRows = rows.filter((row) => !row.art_no || !row.item_name || !row.price || !row.quantity);
-      if (invalidRows.length) {
-        setSalesLoadError(
-          `Some sales rows are missing values or contain 0. ${invalidRows
-            .slice(0, 5)
-            .map((row) => `Row ${row.row_no}`)
-            .join(" | ")}${invalidRows.length > 5 ? " | ..." : ""}`,
-        );
-      }
-      setSalesFileRows(rows);
-      setStatus(`Loaded ${json.length} sales rows from ${file.name}`);
-    } catch {
-      const text = await file.text();
-      const rows = parseSalesLoad(text);
-      if (!rows.length) {
-        setSalesFileRows([]);
-        setSalesLoadError("No usable rows found. Required columns: ART NO, ITEM NAME, PRICE, QUANTITY.");
-        return;
-      }
-      setSalesFileRows(rows);
-      setStatus(`Loaded text rows from ${file.name}`);
-    }
-  }
-
-  function clearSalesFileSelection() {
-    setSalesFileName("");
-    setSalesFileRows([]);
-    setSalesText("");
-    setSalesLoadError("");
-    const input = document.querySelector<HTMLInputElement>(".sales-load-hidden-file");
-    if (input) input.value = "";
-  }
-
-  async function loadSalesFile() {
-    const rows = salesFileRows.length ? salesFileRows : [];
-    if (!salesDate) {
-      setSalesLoadError("Please choose a sale date before loading sales");
-      return;
-    }
-    if (!rows.length) {
-      setSalesLoadError("Please choose a valid sales file before loading");
-      return;
-    }
-    setSalesFileLoading(true);
-    setError("");
-    setSalesLoadError("");
-    try {
-      const result = await api<{ processed: number; failed: Array<[number, string, string]> }>(
-        "/sales/load",
-        token,
-        {
-          method: "POST",
-          body: JSON.stringify({
-            branch: salesBranch,
-            sale_date: salesDate,
-            source_name: "Web sales load",
-            rows,
-          }),
-        },
-      );
-      if (result.failed.length) {
-        const preview = result.failed
-          .slice(0, 5)
-          .map(([rowNo, artNo, reason]) => `Row ${rowNo} ${artNo ? `(${artNo}) ` : ""}${reason}`)
-          .join(" | ");
-        setSalesLoadError(`Sales load completed with ${result.failed.length} failed row${result.failed.length === 1 ? "" : "s"}: ${preview}`);
-      } else {
-        setSalesLoadError("");
-      }
-      setStatus(`Sales load processed: ${result.processed}, failed: ${result.failed.length}`);
-      await refreshAll();
-    } catch (err) {
-      setSalesLoadError(err instanceof Error ? err.message : "Sales load failed");
-    } finally {
-      setSalesFileLoading(false);
-    }
-  }
-
   async function loadBulkStockFile() {
     if (!bulkStockPreview.length) {
       setBulkStockPopup({
@@ -2586,43 +2478,6 @@ export default function Home() {
     };
   }
 
-  async function submitSalesLoad() {
-    setLoading(true);
-    setError("");
-    setSalesLoadError("");
-    try {
-      const rows = salesFileRows;
-      const result = await api<{ processed: number; failed: Array<[number, string, string]> }>(
-        "/sales/load",
-        token,
-        {
-          method: "POST",
-          body: JSON.stringify({
-            branch: salesBranch,
-            sale_date: salesDate,
-            source_name: "Web sales load",
-            rows,
-          }),
-        },
-      );
-      if (result.failed.length) {
-        const preview = result.failed
-          .slice(0, 5)
-          .map(([rowNo, artNo, reason]) => `Row ${rowNo} ${artNo ? `(${artNo}) ` : ""}${reason}`)
-          .join(" | ");
-        setSalesLoadError(`Sales load completed with ${result.failed.length} failed row${result.failed.length === 1 ? "" : "s"}: ${preview}`);
-      } else {
-        setSalesLoadError("");
-      }
-      setStatus(`Sales load processed: ${result.processed}, failed: ${result.failed.length}`);
-      await refreshAll();
-    } catch (err) {
-      setSalesLoadError(err instanceof Error ? err.message : "Sales load failed");
-    } finally {
-      setLoading(false);
-    }
-  }
-
   async function submitLogout() {
     setToken("");
     setRole("");
@@ -3070,14 +2925,12 @@ export default function Home() {
   function downloadSelectedArtNoData() {
     if (!selectedArtNo) return;
     const source = detailItem || detailLookup || {};
-    const matchingSalesRows = salesFileRows.filter((row) => String(row.art_no || "").trim().toUpperCase() === selectedArtNo.toUpperCase());
     const analyticsSummary = {
       branch: detailLookup?.branch || branchName || "All branches",
       available: detailLookup?.available_qty ?? source.available_qty ?? source.total ?? 0,
       wholesale: source.wholesale ?? 0,
       retail: source.retail ?? 0,
       moves_count: filteredMovesRows.length,
-      sales_rows_in_input: matchingSalesRows.length,
     };
     const escapeCell = (value: string) => `"${value.replaceAll('"', '""')}"`;
     const sections: string[] = [];
@@ -3108,15 +2961,6 @@ export default function Home() {
             .map(escapeCell)
             .join(",")
         )
-        .join("\n")
-    );
-
-    sections.push("");
-    sections.push(["Sales Load Rows", ""].map(escapeCell).join(","));
-    sections.push(["Row", "ART NO", "Item", "Price", "Quantity"].map(escapeCell).join(","));
-    sections.push(
-      matchingSalesRows
-        .map((row) => [String(row.row_no), row.art_no, row.item_name, String(row.price), String(row.quantity)].map(escapeCell).join(","))
         .join("\n")
     );
 
@@ -4117,119 +3961,7 @@ export default function Home() {
             ) : null}
           </section>
         ) : null}
-
-        {activeTab === "sales-load" ? (
-          <section className="panel form-panel sales-load-panel">
-            <div className="section-title">Sales Load</div>
-            <div className="sales-load-shell">
-              <div className="sales-load-row">
-              <label className="field sales-load-field sales-load-branch">
-                <span className="sales-load-label">Stock Point</span>
-                <select value={salesBranch} onChange={(e) => setSalesBranch(e.target.value)}>
-                  {branchOptions.map((branch) => (
-                    <option key={branch} value={branch}>
-                      {branch}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label className="field sales-load-field sales-load-date">
-                <span className="sales-load-label">Sale Date (YYYY-MM-DD)</span>
-                <input type="date" value={salesDate} onChange={(e) => setSalesDate(e.target.value)} />
-              </label>
-              <div className="sales-load-file-group">
-                <label className="field sales-load-field sales-load-file">
-                  <span className="sales-load-label">Excel</span>
-                  <input
-                    type="text"
-                    readOnly
-                    value={salesFileName}
-                    placeholder=""
-                  />
-                  <input
-                    className="sales-load-hidden-file"
-                    type="file"
-                    accept=".csv,.xlsx,.xls"
-                    onChange={(e) => handleSalesFilePick(e.target.files?.[0] || null)}
-                  />
-                </label>
-                <button
-                  className="classic-btn sales-load-browse-btn"
-                  type="button"
-                  onClick={() => document.querySelector<HTMLInputElement>('.sales-load-hidden-file')?.click()}
-                >
-                  Browse
-                </button>
-                <button
-                  className="classic-btn sales-load-clear-btn"
-                  type="button"
-                  onClick={clearSalesFileSelection}
-                >
-                  Clear
-                </button>
-                <button
-                  className="primary-btn sales-load-btn"
-                  type="button"
-                  disabled={loading || salesFileLoading}
-                  onClick={() => loadSalesFile()}
-                >
-                  Load Sales
-                </button>
-              </div>
-              </div>
-              <div className="sales-load-result-title">Load Result</div>
-              <div className="sales-load-preview">
-                <div className="sales-load-preview-head">
-                  <span>{salesFileName || "No file selected"}</span>
-                  <span>{salesFileRows.length ? `${salesFileRows.length} rows ready` : "No file loaded yet"}</span>
-                </div>
-                <div className="table-wrap sales-load-table-wrap">
-                  <table className="inventory-table sales-load-table">
-                  <thead>
-                    <tr>
-                      <th>Row</th>
-                      <th>ART NO</th>
-                      <th>Item</th>
-                      <th>Price</th>
-                      <th>Qty</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {(salesFileRows.length ? salesFileRows : []).map((row) => (
-                      <tr key={`${row.row_no}-${row.art_no}`}>
-                        <td>{row.row_no}</td>
-                        <td>{row.art_no}</td>
-                        <td>{row.item_name}</td>
-                        <td>{row.price}</td>
-                        <td>{row.quantity}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                  </table>
-                </div>
-              </div>
-            </div>
-            {salesLoadError ? (
-              <div className="system-dialog-backdrop" role="dialog" aria-modal="true" aria-label="Error">
-                <div className="system-dialog">
-                  <div className="system-dialog-title">Error</div>
-                  <div className="system-dialog-body">
-                    <div className="system-dialog-icon">×</div>
-                    <div className="system-dialog-message">{salesLoadError}</div>
-                  </div>
-                  <div className="system-dialog-actions">
-                    <button className="primary-btn" type="button" onClick={() => setSalesLoadError("")}>
-                      OK
-                    </button>
-                  </div>
-                </div>
-              </div>
-            ) : null}
-
-          </section>
-        ) : null}
-
-        {activeTab === "moves" ? (
+        {activeTab === 'moves' ? (
           <section className={`panel moves-panel ${movesExpanded ? "expanded" : ""}`}>
             <div className="moves-toolbar">
               <div className="moves-search-row">
@@ -4614,3 +4346,4 @@ function CommonPopup({
     </div>
   );
 }
+

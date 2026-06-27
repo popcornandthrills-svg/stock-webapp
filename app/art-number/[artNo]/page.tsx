@@ -509,9 +509,7 @@ export default function ArtNumberDetailsPage() {
           ? "Design Change"
           : /stock movement/i.test(note) || /move|transfer|stock/i.test(event)
             ? "Stock Movement"
-            : /sales load/i.test(note) || /sales/i.test(event)
-              ? "Sales Load"
-              : event || "Inventory Change";
+            : event || "Inventory Change";
 
       return {
         ...row,
@@ -573,13 +571,11 @@ export default function ArtNumberDetailsPage() {
     const batchChanges = relevant.filter((row) => /BATCH NO/i.test(String(row.note || ""))).length;
     const designChanges = relevant.filter((row) => /DESIGN NO/i.test(String(row.note || ""))).length;
     const stockMovements = relevant.filter((row) => /stock movement/i.test(String(row.note || "")) || /Qty:/i.test(String(row.note || "")) && /Branch:/i.test(String(row.note || ""))).length;
-    const salesLoads = relevant.filter((row) => /sales load/i.test(String(row.note || ""))).length;
     return {
       total: relevant.length,
       batchChanges,
       designChanges,
       stockMovements,
-      salesLoads,
     };
   }, [artNo, history]);
 
