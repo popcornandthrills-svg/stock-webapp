@@ -2366,7 +2366,7 @@ export default function Home() {
     applyInventoryPayloadLocally(payload);
     appendLocalAuditHistory(payload, inventoryRows.some((row) => String(row.art_no || "").trim().toUpperCase() === normalizedArtNo) ? "updated" : "created");
     setStatus(`Item saved to backend for ${branchName}.`);
-    await refreshAll().catch(() => {
+    void refreshAll().catch(() => {
       // Keep the optimistic row visible even if a refresh is slow or temporarily fails.
     });
   }
