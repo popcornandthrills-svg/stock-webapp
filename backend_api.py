@@ -827,52 +827,57 @@ def inventory_item_history(art_no: str, user: CurrentUser = Depends(get_current_
 
 @app.post("/inventory/items")
 def create_or_update_inventory_item(payload: InventoryItemRequest, user: CurrentUser = Depends(get_current_user)):
-    if not (user.is_admin or user.is_staff):
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin or staff access required")
-    if payload.category not in CATEGORIES:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Category must be one of: {', '.join(CATEGORIES)}")
-    data = payload.model_dump()
-    existing = db.item_by_art(payload.art_no)
-    if user.is_staff:
-        if not existing:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Staff can only add art numbers that already exist in H.O inventory",
-            )
-        if str(existing.get("branch") or "").strip().upper() not in {"H.O", "HO"}:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Staff can only add stock for art numbers already available in H.O",
-            )
-        requested_branch = str(data.get("branch") or "").strip()
-        if requested_branch and user.branch_name and requested_branch.upper() != user.branch_name.strip().upper():
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Staff can only add stock for their own branch",
-            )
-    if data.get("branch_id") is None:
-        data["branch_id"] = branch_id_for_name(str(data.get("branch") or "H.O"))
-    else:
-        data["branch_id"] = int(data["branch_id"])
-    mode = db.add_item(data)
-    actor_name = user.user_name or "Admin"
-    branch_id = int(data["branch_id"]) if data.get("branch_id") is not None else None
-    note = (
-        f"ART NO {str(payload.art_no).strip().upper()} {mode} by {actor_name} | "
-        f"Batch No: {str(existing.get('batch_no') or '-').strip()} -> {str(payload.batch_no).strip()} | "
-        f"Design No: {str(existing.get('design_no') or '-').strip()} -> {str(payload.design_no).strip()} | "
-        f"Item: {str(payload.item_name).strip()} | Qty: {int(payload.quantity or 0)} | Branch: {str(payload.branch or 'H.O').strip()}"
-    )
-    db.add_audit_log(
-        "inventory_item_upsert",
-        "Admin" if user.is_admin else ("Staff" if user.is_staff else ("Manager" if user.is_manager else "Shop Manager")),
-        actor_name=actor_name,
-        branch_id=branch_id,
-        status="Success",
-        note=note,
-        created_at=str(data.get("created_at") or now_iso()),
-    )
-    return {"status": "ok", "action": mode, "art_no": payload.art_no.strip().upper()}
+    try:
+        if not (user.is_admin or user.is_staff):
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin or staff access required")
+        if payload.category not in CATEGORIES:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Category must be one of: {', '.join(CATEGORIES)}")
+        data = payload.model_dump()
+        existing = db.item_by_art(payload.art_no)
+        if user.is_staff:
+            if not existing:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Staff can only add art numbers that already exist in H.O inventory",
+                )
+            if str(existing.get("branch") or "").strip().upper() not in {"H.O", "HO"}:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Staff can only add stock for art numbers already available in H.O",
+                )
+            requested_branch = str(data.get("branch") or "").strip()
+            if requested_branch and user.branch_name and requested_branch.upper() != user.branch_name.strip().upper():
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Staff can only add stock for their own branch",
+                )
+        if data.get("branch_id") is None:
+            data["branch_id"] = branch_id_for_name(str(data.get("branch") or "H.O"))
+        else:
+            data["branch_id"] = int(data["branch_id"])
+        mode = db.add_item(data)
+        actor_name = user.user_name or "Admin"
+        branch_id = int(data["branch_id"]) if data.get("branch_id") is not None else None
+        note = (
+            f"ART NO {str(payload.art_no).strip().upper()} {mode} by {actor_name} | "
+            f"Batch No: {str(existing.get('batch_no') or '-').strip()} -> {str(payload.batch_no).strip()} | "
+            f"Design No: {str(existing.get('design_no') or '-').strip()} -> {str(payload.design_no).strip()} | "
+            f"Item: {str(payload.item_name).strip()} | Qty: {int(payload.quantity or 0)} | Branch: {str(payload.branch or 'H.O').strip()}"
+        )
+        db.add_audit_log(
+            "inventory_item_upsert",
+            "Admin" if user.is_admin else ("Staff" if user.is_staff else ("Manager" if user.is_manager else "Shop Manager")),
+            actor_name=actor_name,
+            branch_id=branch_id,
+            status="Success",
+            note=note,
+            created_at=str(data.get("created_at") or now_iso()),
+        )
+        return {"status": "ok", "action": mode, "art_no": payload.art_no.strip().upper()}
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Inventory save failed: {exc}") from exc
 
 
 @app.delete("/inventory/items/{item_id}")

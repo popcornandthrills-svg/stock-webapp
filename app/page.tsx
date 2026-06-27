@@ -371,26 +371,41 @@ function describeUnknownError(value: unknown) {
   return "";
 }
 
-async function api<T>(path: string, token?: string, init?: RequestInit) {
-  const response = await fetch(apiUrl(path), {
-    cache: "no-store",
-    ...init,
-    headers: {
-      ...(init?.headers || {}),
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      ...(init?.body ? { "content-type": "application/json" } : {}),
-    },
-  });
-  if (!response.ok) {
-    const text = await response.text();
-    throw new ApiError(response.status, text || `Request failed: ${response.status}`);
-  }
-  const text = await response.text();
-  if (!text.trim()) return {} as T;
+async function api<T>(path: string, token?: string, init?: RequestInit & { timeoutMs?: number }) {
+  const timeoutMs = init?.timeoutMs;
+  const controller = timeoutMs ? new AbortController() : null;
+  const timer = timeoutMs
+    ? window.setTimeout(() => controller?.abort(), timeoutMs)
+    : null;
   try {
-    return JSON.parse(text) as T;
-  } catch {
-    return text as T;
+    const response = await fetch(apiUrl(path), {
+      cache: "no-store",
+      ...init,
+      signal: controller?.signal,
+      headers: {
+        ...(init?.headers || {}),
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        ...(init?.body ? { "content-type": "application/json" } : {}),
+      },
+    });
+    if (!response.ok) {
+      const text = await response.text();
+      throw new ApiError(response.status, text || `Request failed: ${response.status}`);
+    }
+    const text = await response.text();
+    if (!text.trim()) return {} as T;
+    try {
+      return JSON.parse(text) as T;
+    } catch {
+      return text as T;
+    }
+  } catch (error) {
+    if (controller?.signal.aborted) {
+      throw new ApiError(408, `Request timed out after ${timeoutMs}ms`);
+    }
+    throw error;
+  } finally {
+    if (timer) window.clearTimeout(timer);
   }
 }
 
@@ -2356,6 +2371,7 @@ export default function Home() {
     try {
       await api("/inventory/items", token, {
         method: "POST",
+        timeoutMs: 15000,
         body: JSON.stringify(payload),
       });
       applyInventoryPayloadLocally(payload);
