@@ -307,7 +307,7 @@ export default function ArtNumberDetailsPage() {
           audit: Array.isArray(bootstrapJson?.audit) && bootstrapJson.audit.length ? bootstrapJson.audit : storedAuditRows,
         };
 
-        const [itemRes, historyRes, lookupRes, inventoryRes, movesRes, auditRes] = await Promise.all([
+        const [itemRes, historyRes, lookupRes, movesRes] = await Promise.all([
           fetchWithTimeout(apiUrl(`/inventory/item-by-art/${encodeURIComponent(artNo)}`), {
             cache: "no-store",
             headers: { Authorization: `Bearer ${token}` },
@@ -320,10 +320,6 @@ export default function ArtNumberDetailsPage() {
             cache: "no-store",
             headers: { Authorization: `Bearer ${token}` },
           }, 8000),
-          fetchWithTimeout(apiUrl(`/inventory?limit=1000&search=${encodeURIComponent(artNo)}`), {
-            cache: "no-store",
-            headers: { Authorization: `Bearer ${token}` },
-          }, 8000),
           fetchWithTimeout(apiUrl(`/moves?limit=1000&art_no=${encodeURIComponent(artNo)}`), {
             // Ask the backend for this art number directly so older movements are not lost
             // when the global recent-moves slice is shorter than the item's history.
@@ -331,38 +327,18 @@ export default function ArtNumberDetailsPage() {
             cache: "no-store",
             headers: { Authorization: `Bearer ${token}` },
           }, 8000),
-          fetchWithTimeout(apiUrl(`/audit-logs?limit=300`), {
-            cache: "no-store",
-            headers: { Authorization: `Bearer ${token}` },
-          }, 8000).catch(() => new Response(JSON.stringify({ items: [] }), { status: 200 })),
         ]);
 
-        const [itemJson, historyJson, lookupJson, inventoryJson, movesJson, auditJson] = await Promise.all([
+        const [itemJson, historyJson, lookupJson, movesJson] = await Promise.all([
           itemRes.json().catch(() => ({})),
           historyRes.json().catch(() => ({})),
           lookupRes.json().catch(() => ({})),
-          inventoryRes.json().catch(() => ({})),
           movesRes.json().catch(() => ({})),
-          auditRes.json().catch(() => ({})),
         ]);
 
         if (cancelled) return;
 
-        const inventoryRows = Array.isArray(inventoryJson?.items)
-          ? inventoryJson.items
-          : Array.isArray(inventoryJson?.data)
-            ? inventoryJson.data
-            : Array.isArray(inventoryJson)
-              ? inventoryJson
-              : [];
-        const bootstrapInventoryRows = bootstrapCacheRef.current.inventory;
         const bootstrapMoveRows = bootstrapCacheRef.current.moves;
-        const bootstrapAuditRows = bootstrapCacheRef.current.audit;
-
-        const inventoryMatch =
-          inventoryRows.find((row: AnyRecord) => String(deepFindValue(row, "art_no", "ART_NO", "Art No", "Art Number") || "").trim().toUpperCase() === artNo.toUpperCase()) ||
-          bootstrapInventoryRows.find((row: AnyRecord) => String(deepFindValue(row, "art_no", "ART_NO", "Art No", "Art Number") || "").trim().toUpperCase() === artNo.toUpperCase()) ||
-          {};
 
         const historyMoveRows = Array.isArray((historyJson as AnyRecord)?.moves) ? (historyJson as AnyRecord).moves : [];
         const rows = Array.isArray(movesJson?.moves) && movesJson.moves.length
@@ -370,36 +346,18 @@ export default function ArtNumberDetailsPage() {
           : historyMoveRows.length
             ? historyMoveRows
             : bootstrapMoveRows;
-        const auditRows = Array.isArray((auditJson as AnyRecord)?.items) && (auditJson as AnyRecord).items.length
-          ? (auditJson as AnyRecord).items
-          : bootstrapAuditRows;
         const moveRows = rows.filter((row: MoveRow) => matchesArtNo(deepFindValue(row, "art_no", "ART_NO", "Art No", "lookup"), artNo));
-        const auditMoveRows = auditRows
-          .map((row: AnyRecord) => parseAuditMoveRow(row, artNo))
-          .filter((row): row is MoveRow => Boolean(row));
-        const combinedMoves = [...moveRows, ...auditMoveRows].filter((row, index, self) => {
-          const key = `${String(row.created_at || "")}|${String(row.mtype || row.type || "")}|${String(row.qty ?? row.quantity ?? 0)}|${String(row.from_p || row.from_branch || "")}|${String(row.to_p || row.to_branch || "")}|${String(row.note || "")}`;
-          return index === self.findIndex((item) => {
-            const itemKey = `${String(item.created_at || "")}|${String(item.mtype || item.type || "")}|${String(item.qty ?? item.quantity ?? 0)}|${String(item.from_p || item.from_branch || "")}|${String(item.to_p || item.to_branch || "")}|${String(item.note || "")}`;
-            return itemKey === key;
-          });
-        });
+        const combinedMoves = moveRows;
         const lookupItem = asRecord(lookupJson?.item || lookupJson);
         const bootstrapLookupItem = asRecord(
-          bootstrapInventoryRows.find((row: AnyRecord) => String(deepFindValue(row, "art_no", "ART_NO", "Art No", "Art Number") || "").trim().toUpperCase() === artNo.toUpperCase()) ||
-            bootstrapMoveRows.find((row: AnyRecord) => matchesArtNo(deepFindValue(row, "art_no", "ART_NO", "Art No", "lookup"), artNo)) ||
+          bootstrapMoveRows.find((row: AnyRecord) => matchesArtNo(deepFindValue(row, "art_no", "ART_NO", "Art No", "lookup"), artNo)) ||
             {}
         );
-        const fallbackMove = moveRows[0] || auditMoveRows[0] || rows[0] || {};
+        const fallbackMove = moveRows[0] || rows[0] || {};
         const bootstrapFallbackMove = bootstrapMoveRows.find((row: AnyRecord) => matchesArtNo(deepFindValue(row, "art_no", "ART_NO", "Art No", "lookup"), artNo)) || {};
         const storedFallbackMove = storedMoveRows.find((row: AnyRecord) => matchesArtNo(deepFindValue(row, "art_no", "ART_NO", "Art No", "lookup"), artNo)) || {};
-        const storedLookupItem = asRecord(
-          storedInventoryRows.find((row: AnyRecord) => String(deepFindValue(row, "art_no", "ART_NO", "Art No", "Art Number") || "").trim().toUpperCase() === artNo.toUpperCase()) || {}
-        );
         const source = normalizeItem(
-          inventoryMatch,
           bootstrapLookupItem,
-          storedLookupItem,
           itemJson,
           lookupJson,
           lookupItem,
@@ -424,20 +382,16 @@ export default function ArtNumberDetailsPage() {
             source.item_name ||
             moveBackfillName ||
             String(deepFindValue(bootstrapLookupItem, "item_name", "Item Name", "item") || "") ||
-            String(deepFindValue(storedLookupItem, "item_name", "Item Name", "item") || "") ||
             String(deepFindValue(lookupJson, "item_name", "Item Name", "item") || deepFindValue(itemJson, "item_name", "Item Name", "item") || ""),
           category:
             source.category ||
             moveBackfillCategory ||
             String(deepFindValue(bootstrapLookupItem, "category", "Category") || "") ||
-            String(deepFindValue(storedLookupItem, "category", "Category") || "") ||
             String(deepFindValue(lookupJson, "category", "Category") || deepFindValue(itemJson, "category", "Category") || ""),
           available_qty:
             Number(
               deepFindValue(lookupJson, "available_qty", "AVAILABLE_QTY", "qty", "QTY") ??
-                deepFindValue(inventoryMatch, "available_qty", "AVAILABLE_QTY", "qty", "QTY") ??
                 deepFindValue(bootstrapLookupItem, "available_qty", "AVAILABLE_QTY", "qty", "QTY") ??
-                deepFindValue(storedLookupItem, "available_qty", "AVAILABLE_QTY", "qty", "QTY") ??
                 moveBackfillQty ??
                 source.available_qty ??
                 0
@@ -447,11 +401,10 @@ export default function ArtNumberDetailsPage() {
           description:
             source.description ||
             String(deepFindValue(bootstrapLookupItem, "description", "Description") || "") ||
-            String(deepFindValue(storedLookupItem, "description", "Description") || "") ||
             String(deepFindValue(lookupJson, "description", "Description") || deepFindValue(itemJson, "description", "Description") || ""),
           by: asRecord(deepFindValue(lookupJson, "by", "BY", "branch_qty", "branchQty") || deepFindValue(itemJson, "by", "BY", "branch_qty", "branchQty") || source.by || {}),
         });
-        if (!source.art_no && !inventoryMatch && !lookupItem && !combinedMoves.length) {
+        if (!source.art_no && !lookupItem && !combinedMoves.length) {
           setError(`ART NO ${artNo} was not found in the live backend data source.`);
         }
         setMoves(combinedMoves.sort((a, b) => String(b.created_at || "").localeCompare(String(a.created_at || ""))));
