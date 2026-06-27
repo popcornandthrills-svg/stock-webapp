@@ -2377,6 +2377,20 @@ export default function Home() {
       applyInventoryPayloadLocally(payload);
       appendLocalAuditHistory(payload, inventoryRows.some((row) => String(row.art_no || "").trim().toUpperCase() === normalizedArtNo) ? "updated" : "created");
       setStatus(`Item saved to backend for ${branchName}.`);
+      setItemForm({
+        art_no: "",
+        batch_no: "",
+        design_no: "",
+        item_name: "",
+        wholesale: "",
+        description: "",
+        category: "None",
+        quantity: "0",
+        branch: branchName,
+      });
+      setArtNoFormLookup(null);
+      setScanStatus("No scan yet");
+      setBarcodeScan("");
       await refreshAll().catch(() => {
         // Keep the saved row visible even if a refresh is slow or temporarily fails.
       });
