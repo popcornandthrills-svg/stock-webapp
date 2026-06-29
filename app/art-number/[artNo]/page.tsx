@@ -290,7 +290,6 @@ export default function ArtNumberDetailsPage() {
   useEffect(() => {
     if (!artNo || !token) return;
     let cancelled = false;
-    let refreshTimer: number | null = null;
 
     async function load() {
       setLoading(true);
@@ -441,28 +440,8 @@ export default function ArtNumberDetailsPage() {
     }
 
     load();
-    const scheduleRefresh = () => {
-      if (refreshTimer) {
-        window.clearTimeout(refreshTimer);
-      }
-      refreshTimer = window.setTimeout(() => {
-        void load();
-      }, 5000);
-    };
-    scheduleRefresh();
-    const onVisibilityChange = () => {
-      if (document.visibilityState === "visible") {
-        void load();
-        scheduleRefresh();
-      }
-    };
-    document.addEventListener("visibilitychange", onVisibilityChange);
     return () => {
       cancelled = true;
-      document.removeEventListener("visibilitychange", onVisibilityChange);
-      if (refreshTimer) {
-        window.clearTimeout(refreshTimer);
-      }
     };
   }, [artNo, token]);
 

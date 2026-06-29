@@ -2362,9 +2362,6 @@ export default function Home() {
       applyInventoryPayloadLocally(payload);
       appendLocalAuditHistory(payload, inventoryRows.some((row) => String(row.art_no || "").trim().toUpperCase() === normalizedArtNo) ? "updated" : "created");
       setStatus(`Item saved locally for ${branchName}.`);
-      await refreshAll().catch(() => {
-        // Keep the locally edited row visible even if the backend refresh is unavailable.
-      });
       return;
     }
     setStatus(`Saving ${normalizedArtNo} to backend for ${branchName}...`);
@@ -2391,12 +2388,12 @@ export default function Home() {
       setArtNoFormLookup(null);
       setScanStatus("No scan yet");
       setBarcodeScan("");
-      await refreshAll().catch(() => {
-        // Keep the saved row visible even if a refresh is slow or temporarily fails.
-      });
       setInventorySuccessPopup({
         title: "Saved Successfully",
         message: `ART NO ${normalizedArtNo} was saved to the backend database successfully.`,
+      });
+      void refreshAll().catch(() => {
+        // Keep the saved row visible even if a refresh is slow or temporarily fails.
       });
       if (inventorySuccessPopupTimerRef.current) {
         window.clearTimeout(inventorySuccessPopupTimerRef.current);
