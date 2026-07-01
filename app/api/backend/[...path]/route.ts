@@ -2,12 +2,24 @@ const BACKEND_URL =
   process.env.BACKEND_URL ||
   process.env.NEXT_PUBLIC_BACKEND_URL ||
   process.env.NEXT_PUBLIC_API_BACKEND_URL ||
-  "https://stock-webapp-vs3h.onrender.com";
+  (process.env.NODE_ENV === "production" ? "" : "http://127.0.0.1:8000");
 
 export const runtime = "nodejs";
 
 async function proxyRequest(request: Request) {
   try {
+    if (!BACKEND_URL) {
+      return new Response(
+        JSON.stringify({
+          detail:
+            "BACKEND_URL is not configured. Set BACKEND_URL on Vercel to the hosted Python backend URL.",
+        }),
+        {
+        status: 500,
+        headers: { "content-type": "application/json" },
+        }
+      );
+    }
     const url = new URL(request.url);
     const prefix = "/api/backend/";
     const pathname = url.pathname.startsWith(prefix) ? url.pathname.slice(prefix.length) : "";
@@ -16,7 +28,21 @@ async function proxyRequest(request: Request) {
     target.search = url.search;
 
     const headers = new Headers(request.headers);
-    headers.delete("host");
+    for (const name of [
+      "host",
+      "connection",
+      "content-length",
+      "transfer-encoding",
+      "upgrade",
+      "expect",
+      "keep-alive",
+      "proxy-authorization",
+      "proxy-authenticate",
+      "te",
+      "trailer",
+    ]) {
+      headers.delete(name);
+    }
 
     const init: RequestInit = {
       method: request.method,
@@ -47,7 +73,7 @@ async function proxyRequest(request: Request) {
       }),
       {
         status: 503,
-      headers: { "content-type": "application/json" },
+        headers: { "content-type": "application/json" },
       }
     );
   }

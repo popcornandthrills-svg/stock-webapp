@@ -194,7 +194,12 @@ class DB:
 
     def c(self):
         if self.is_postgres:
-            conn = psycopg.connect(self.path, row_factory=dict_row)
+            conn = psycopg.connect(
+                self.path,
+                row_factory=dict_row,
+                connect_timeout=5,
+                options="-c statement_timeout=15000",
+            )
             return DBSession(self, conn)
         conn = sqlite3.connect(self.path, timeout=30)
         conn.row_factory = sqlite3.Row
@@ -760,10 +765,13 @@ class DB:
         design_no = str(payload.get("design_no", "")).strip().upper()
         item_name = str(payload.get("item_name", "")).strip()
         category = str(payload.get("category", "")).strip()
+        desc = " - ".join(part for part in [category, item_name] if part)
+        explicit_desc = str(payload.get("desc") or payload.get("description") or "").strip()
+        if explicit_desc:
+            desc = explicit_desc
         reorder = int(payload.get("reorder", 0))
         quantity = int(payload.get("quantity", 0))
         branch_id = int(payload.get("branch_id") or 1)
-        desc = str(payload.get("desc", "")).strip()
 
         if not art_no or not batch_no or not design_no:
             raise ValueError("ART NO, Batch No, and Design No are required")

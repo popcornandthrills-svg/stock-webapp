@@ -77,7 +77,7 @@ Main API areas included:
 
 ## Vercel deployment
 
-If you deploy the Next.js frontend to Vercel, set a backend URL environment variable in Vercel.
+If you deploy the Next.js frontend to Vercel, you must point it at a separately hosted Python backend.
 
 Recommended variables:
 
@@ -93,7 +93,8 @@ Notes:
 - `app/api/backend/[...path]/route.ts` proxies frontend requests to the backend.
 - Do not point Vercel to `127.0.0.1:8000`; that only works on your own PC.
 - Keep the backend on Railway, Render, or another Python host, then point the Vercel frontend to that hosted backend.
-- For the first Vercel test, use a real hosted backend URL in the environment variables. If the backend is still local, the Vercel page will load but data calls will fail.
+- For an exact data match, Vercel must use the same hosted backend and the same database snapshot as local. If the backend is still local, the Vercel page will load but data calls will fail.
+- In production, if `BACKEND_URL` is missing, the frontend can still load a local bootstrap snapshot, but API actions will be disabled until the backend URL is configured.
 
 ## Backup and restore
 

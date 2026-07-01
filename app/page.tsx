@@ -128,7 +128,7 @@ type AuditRow = {
 
 const API_URL = "/api/backend";
 const branchOptions = ["H.O", "GPH", "GPC", "GPF", "GPS", "MGP", "AMARAVATHI", "KALIMATA", "NAVISHKA"];
-const tabs = ["inventory", "inventory-upload", "stock-movement", "moves", "admin-panel"] as const;
+const tabs = ["inventory", "inventory-upload", "sales-load", "stock-movement", "moves", "admin-panel"] as const;
 type AppTab = (typeof tabs)[number];
 const inventoryColumns = ["H.O", "GPH", "GPC", "GPF", "MGP", "GPS", "AMARAVATHI", "KALIMATA", "NAVISHKA"];
 const STORAGE_KEYS = {
@@ -143,6 +143,8 @@ const STORAGE_KEYS = {
   auditHistory: "goldprince.auditHistory",
   pendingTransfers: "goldprince.pendingTransfers",
 };
+const USE_BROWSER_CACHE = process.env.NODE_ENV !== "production";
+const USE_INVENTORY_BROWSER_CACHE = true;
 
 class ApiError extends Error {
   status: number;
@@ -371,6 +373,20 @@ function describeUnknownError(value: unknown) {
   return "";
 }
 
+function normalizeApiErrorMessage(value: string) {
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+  try {
+    const parsed = JSON.parse(raw) as { detail?: unknown; message?: unknown; error?: unknown };
+    const detail = parsed?.detail ?? parsed?.message ?? parsed?.error;
+    if (typeof detail === "string" && detail.trim()) return detail.trim();
+    if (detail != null) return String(detail).trim();
+  } catch {
+    // not JSON, fall through to raw text
+  }
+  return raw;
+}
+
 async function api<T>(path: string, token?: string, init?: RequestInit & { timeoutMs?: number }) {
   const timeoutMs = init?.timeoutMs;
   const controller = timeoutMs ? new AbortController() : null;
@@ -390,7 +406,7 @@ async function api<T>(path: string, token?: string, init?: RequestInit & { timeo
     });
     if (!response.ok) {
       const text = await response.text();
-      throw new ApiError(response.status, text || `Request failed: ${response.status}`);
+      throw new ApiError(response.status, normalizeApiErrorMessage(text) || `Request failed: ${response.status}`);
     }
     const text = await response.text();
     if (!text.trim()) return {} as T;
@@ -534,6 +550,28 @@ function normalizeBranchName(value: unknown) {
   return String(value ?? "").trim().replace(/\s+/g, " ").toUpperCase();
 }
 
+function mergeInventoryRows(base: InventoryRow[], incoming: InventoryRow[]) {
+  const merged = [...base];
+  for (const row of incoming) {
+    const artNo = String(row.art_no || "").trim().toUpperCase();
+    if (!artNo) continue;
+    const index = merged.findIndex((item) => String(item.art_no || "").trim().toUpperCase() === artNo);
+    if (index >= 0) {
+      merged[index] = {
+        ...merged[index],
+        ...row,
+        by: {
+          ...(merged[index].by || {}),
+          ...(row.by || {}),
+        },
+      };
+    } else {
+      merged.push(row);
+    }
+  }
+  return merged;
+}
+
 export default function Home() {
   const router = useRouter();
   const [token, setToken] = useState(() => (typeof window === "undefined" ? "" : readStoredJson(STORAGE_KEYS.token, "")));
@@ -569,8 +607,12 @@ export default function Home() {
   const [inventoryUploadLoading, setInventoryUploadLoading] = useState(false);
   const [inventoryUploadPopup, setInventoryUploadPopup] = useState<{ title: string; message: string } | null>(null);
   const [inventoryOverview, setInventoryOverview] = useState<InventoryOverview>({});
-  const [movesRows, setMovesRows] = useState<MoveRow[]>([]);
-  const [auditHistory, setAuditHistory] = useState<AuditRow[]>([]);
+  const [movesRows, setMovesRows] = useState<MoveRow[]>(() =>
+    typeof window === "undefined" ? [] : readStoredJson(STORAGE_KEYS.movesRows, [], isMoveRowArray)
+  );
+  const [auditHistory, setAuditHistory] = useState<AuditRow[]>(() =>
+    typeof window === "undefined" ? [] : readStoredJson(STORAGE_KEYS.auditHistory, [], isAuditRowArray)
+  );
   const [movesBranch, setMovesBranch] = useState("All");
   const [movesArtNo, setMovesArtNo] = useState("");
   const [movesDateFrom, setMovesDateFrom] = useState("");
@@ -681,6 +723,16 @@ export default function Home() {
 
   useEffect(() => {
     if (!hydrated) return;
+    if (USE_INVENTORY_BROWSER_CACHE) {
+      const storedInventoryRows = readStoredJson(STORAGE_KEYS.inventoryRows, [], isInventoryRowArray);
+      const storedInventoryOverview = readStoredJson(STORAGE_KEYS.inventoryOverview, {}, isPlainObject);
+      if (storedInventoryRows.length) {
+        setInventoryRows((current) => (current.length ? current : storedInventoryRows));
+      }
+      if (Object.keys(storedInventoryOverview).length) {
+        setInventoryOverview((current) => (Object.keys(current).length ? current : storedInventoryOverview));
+      }
+    }
     let cancelled = false;
     loadBootstrapBundle()
       .then((bundle) => {
@@ -689,13 +741,28 @@ export default function Home() {
         setRole(bundle.role || "admin");
         setUserName(bundle.user_name || "Admin");
         setBranchName(bundle.branch_name || "All branches");
-        setInventoryRows(toInventoryRowArray(bundle.inventory || []));
-        setInventoryOverview(isPlainObject(bundle.overview) ? bundle.overview : {});
-        setMovesRows(toMoveRowArray(bundle.moves || []));
+        const nextInventoryOverview = isPlainObject(bundle.overview) ? bundle.overview : {};
+        setInventoryOverview(() => nextInventoryOverview);
         setStatus("");
       })
-      .catch(() => {
-        if (!cancelled) setError("Unable to initialize admin session");
+      .catch(async () => {
+        if (cancelled) return;
+        try {
+          const snapshot = await loadLocalBootstrapSnapshot();
+          if (!snapshot) {
+            setError("Unable to initialize admin session");
+            return;
+          }
+          if (snapshot.token) setToken(snapshot.token);
+          if (snapshot.role) setRole(snapshot.role);
+          if (snapshot.user_name) setUserName(snapshot.user_name);
+          if (snapshot.branch_name) setBranchName(snapshot.branch_name);
+          const nextInventoryOverview = isPlainObject(snapshot.overview) ? snapshot.overview : {};
+          setInventoryOverview(() => nextInventoryOverview);
+          setStatus("");
+        } catch {
+          setError("Unable to initialize admin session");
+        }
       });
     return () => {
       cancelled = true;
@@ -728,6 +795,24 @@ export default function Home() {
   }, [activeTab, role]);
 
   useEffect(() => {
+    if (!hydrated) return;
+    if (activeTab !== "inventory" && activeTab !== "inventory-upload" && activeTab !== "sales-load" && activeTab !== "stock-movement") return;
+    if (inventoryRows.length > 0) return;
+    loadInventoryData()
+      .then((rows) => setInventoryRows(rows))
+      .catch((err) => setError(err instanceof Error ? err.message : "Failed to load inventory"));
+  }, [activeTab, hydrated, inventoryRows.length]);
+
+  useEffect(() => {
+    if (!hydrated) return;
+    if (activeTab !== "moves" && activeTab !== "stock-movement") return;
+    if (movesRows.length > 0) return;
+    loadMovesData()
+      .then((rows) => setMovesRows(rows))
+      .catch((err) => setError(err instanceof Error ? err.message : "Failed to load moves"));
+  }, [activeTab, hydrated, movesRows.length]);
+
+  useEffect(() => {
     writeStoredJson(STORAGE_KEYS.token, token);
   }, [token]);
 
@@ -748,18 +833,22 @@ export default function Home() {
   }, [status]);
 
   useEffect(() => {
+    if (!USE_INVENTORY_BROWSER_CACHE) return;
     writeStoredJson(STORAGE_KEYS.inventoryRows, inventoryRows);
   }, [inventoryRows]);
 
   useEffect(() => {
+    if (!USE_INVENTORY_BROWSER_CACHE) return;
     writeStoredJson(STORAGE_KEYS.inventoryOverview, inventoryOverview);
   }, [inventoryOverview]);
 
   useEffect(() => {
+    if (!USE_BROWSER_CACHE) return;
     writeStoredJson(STORAGE_KEYS.movesRows, movesRows);
   }, [movesRows]);
 
   useEffect(() => {
+    if (!USE_BROWSER_CACHE) return;
     writeStoredJson(STORAGE_KEYS.auditHistory, auditHistory);
   }, [auditHistory]);
 
@@ -783,20 +872,45 @@ export default function Home() {
     return index >= 0 ? index + 1 : 1;
   }
 
-  function projectInventoryRowToAddItem(row: InventoryRow) {
-    setItemForm((prev) => ({
-      ...prev,
-      art_no: String(row.art_no || ""),
+function projectInventoryRowToAddItem(row: InventoryRow) {
+  setItemForm((prev) => ({
+    ...prev,
+    art_no: String(row.art_no || ""),
       batch_no: String(row.batch_no || ""),
       design_no: String(row.design_no || ""),
       item_name: String(row.item_name || ""),
       category: String(row.category || prev.category || "None"),
       wholesale: String(row.wholesale ?? prev.wholesale ?? ""),
-      description: String(row.description || prev.description || ""),
+      description: inventoryRowDescription(row) || String(prev.description || ""),
       quantity: String(row.available_qty ?? row.total ?? prev.quantity ?? ""),
-      branch: String(row.branch || prev.branch || "H.O"),
-    }));
+    branch: String(row.branch || prev.branch || "H.O"),
+  }));
+}
+
+function composeInventoryDescription(category: string, itemName: string) {
+  const cleanCategory = String(category || "").trim();
+  const cleanItemName = String(itemName || "").trim();
+  if (cleanCategory && cleanItemName) return `${cleanCategory} - ${cleanItemName}`;
+  return cleanCategory || cleanItemName;
+}
+
+function syncInventoryDescription(row: { category?: string; item_name?: string; description?: string }) {
+  const composed = composeInventoryDescription(String(row.category || ""), String(row.item_name || ""));
+  return composed || String(row.description || "").trim();
+}
+
+function inventoryRowDescription(row: { category?: string; item_name?: string; description?: string }) {
+  return composeInventoryDescription(String(row.category || ""), String(row.item_name || "")) || String(row.description || "").trim();
+}
+
+function nextSuggestedDescription(prev: { category?: string; item_name?: string; description?: string }, nextCategory: string, nextItemName: string) {
+  const previousSuggestion = composeInventoryDescription(String(prev.category || ""), String(prev.item_name || ""));
+  const currentDescription = String(prev.description || "").trim();
+  if (!currentDescription || currentDescription === previousSuggestion) {
+    return composeInventoryDescription(nextCategory, nextItemName);
   }
+  return currentDescription;
+}
 
   useEffect(() => {
     const nextWholesale = String(decodePrice(itemForm.batch_no));
@@ -815,7 +929,7 @@ export default function Home() {
         row.design_no,
         row.item_name,
         row.category,
-        row.description,
+        inventoryRowDescription(row),
         row.branch,
         String(row.created_at || "").slice(0, 10),
         row.wholesale,
@@ -832,7 +946,7 @@ export default function Home() {
       if (sortKey === "item_name") return String(row.item_name || "");
       if (sortKey === "category") return String(row.category || "");
       if (sortKey === "qty") return Number(row.available_qty ?? row.total ?? 0);
-      if (sortKey === "description") return String(row.description || "");
+      if (sortKey === "description") return inventoryRowDescription(row);
       return Number(row.wholesale ?? 0);
     };
     rows.sort((a, b) => {
@@ -959,6 +1073,7 @@ export default function Home() {
     visibleRows.every((row) => row.id != null && selectedInventoryIds.has(row.id));
   const todayKey = useMemo(() => new Date().toISOString().slice(0, 10), []);
   const isInventoryUploadTab = activeTab === "inventory-upload";
+  const isSalesLoadTab = activeTab === "sales-load";
 
   async function loadBootstrapBundle() {
     const response = await fetch("/api/bootstrap", { cache: "no-store" });
@@ -976,23 +1091,57 @@ export default function Home() {
     };
   }
 
+  async function loadInventoryData() {
+    const response = await fetch(apiUrl("/inventory?limit=1000"), { cache: "no-store" });
+    if (!response.ok) {
+      throw new Error(await response.text());
+    }
+    const data = (await response.json()) as { items?: InventoryRow[] };
+    return toInventoryRowArray(data.items || []);
+  }
+
+  async function loadMovesData() {
+    const response = await fetch(apiUrl("/moves?limit=100"), { cache: "no-store" });
+    if (!response.ok) {
+      throw new Error(await response.text());
+    }
+    const data = (await response.json()) as { moves?: MoveRow[] };
+    return toMoveRowArray(data.moves || []);
+  }
+
+  async function loadLocalBootstrapSnapshot() {
+    const response = await fetch("/local-bootstrap.json", { cache: "force-cache" });
+    if (!response.ok) return null;
+    return (await response.json()) as {
+      token?: string;
+      role?: string;
+      user_name?: string;
+      branch_name?: string;
+      inventory?: InventoryRow[];
+      overview?: InventoryOverview;
+      moves?: MoveRow[];
+    };
+  }
+
   async function refreshAll() {
     if (refreshInFlightRef.current) return;
     refreshInFlightRef.current = true;
     try {
       const bundle = await loadBootstrapBundle();
-      const nextInventoryRows = toInventoryRowArray(bundle.inventory || []);
       const nextInventoryOverview = isPlainObject(bundle.overview) ? bundle.overview : {};
-      const nextMovesRows = toMoveRowArray(bundle.moves || []);
       setToken(bundle.token || "");
       setRole(bundle.role || "admin");
       setUserName(bundle.user_name || "Admin");
       setBranchName(bundle.branch_name || "All branches");
-      setInventoryRows((current) => (nextInventoryRows.length ? nextInventoryRows : current));
       setInventoryOverview((current) =>
         Object.keys(nextInventoryOverview).length ? nextInventoryOverview : current
       );
-      setMovesRows((current) => (nextMovesRows.length ? nextMovesRows : current));
+      if (activeTab === "inventory" || activeTab === "inventory-upload" || activeTab === "sales-load" || activeTab === "stock-movement") {
+        setInventoryRows(bundle.inventory?.length ? toInventoryRowArray(bundle.inventory) : await loadInventoryData());
+      }
+      if (activeTab === "moves" || activeTab === "stock-movement") {
+        setMovesRows(bundle.moves?.length ? toMoveRowArray(bundle.moves) : await loadMovesData());
+      }
       setError("");
     } finally {
       refreshInFlightRef.current = false;
@@ -1361,7 +1510,7 @@ export default function Home() {
           category: row.category,
           branch: row.branch,
           branch_id: branchIdForName(row.branch),
-          desc: row.description,
+          desc: inventoryRowDescription(row),
           quantity: Number(row.quantity || 0),
           reorder_level: 0,
           reorder: 0,
@@ -1508,7 +1657,11 @@ export default function Home() {
     setMovementPopup(null);
     setLoading(true);
     setError("");
+    let progressTimer: number | null = null;
     try {
+      progressTimer = window.setTimeout(() => {
+        setStatus("Transfer is still running in the backend. Please wait...");
+      }, 5000);
       const queuedRows = pendingTransfers
         .map((row) => normalizePendingTransfer(row))
         .filter((row) => row.lookup && row.from_branch && row.to_branch && Number.isFinite(row.qty) && row.qty > 0);
@@ -1569,6 +1722,12 @@ export default function Home() {
           );
         })
       );
+      setPendingTransfers((current) => current.filter((row) => !queuedRows.some((pending) => pending.id === row.id)));
+      setSelectedPendingIds((current) => {
+        const next = new Set(current);
+        queuedRows.forEach((row) => next.delete(row.id));
+        return next;
+      });
       if (queuedRows.length) {
         const optimisticMoves = queuedRows.map((row) => ({
           id: Date.now() + Math.floor(Math.random() * 1000),
@@ -1586,12 +1745,6 @@ export default function Home() {
         }));
         setMovesRows((current) => [...optimisticMoves, ...current]);
       }
-      setPendingTransfers((current) => current.filter((row) => !queuedRows.some((pending) => pending.id === row.id)));
-      setSelectedPendingIds((current) => {
-        const next = new Set(current);
-        queuedRows.forEach((row) => next.delete(row.id));
-        return next;
-      });
       setMovementError("");
       window.sessionStorage.removeItem(STORAGE_KEYS.pendingTransfers);
       setMovesExpanded(true);
@@ -1651,6 +1804,7 @@ export default function Home() {
       setError(message);
       setStatus(`Transfer failed: ${message}`);
     } finally {
+      if (progressTimer) window.clearTimeout(progressTimer);
       setLoading(false);
     }
   }
@@ -2034,7 +2188,7 @@ export default function Home() {
         "Available QTY": row.available_qty ?? row.total ?? 0,
         ...Object.fromEntries(inventoryColumns.map((col) => [col, row.by?.[col] ?? 0])),
         WHOLESALE: Number(row.wholesale ?? 0),
-        DESCRIPTION: row.description || "-",
+        DESCRIPTION: inventoryRowDescription(row) || "-",
       }));
       const workbook = XLSX.utils.book_new();
       const sheet = XLSX.utils.json_to_sheet(rows);
@@ -2097,7 +2251,7 @@ export default function Home() {
         String(row.available_qty ?? row.total ?? 0),
         ...inventoryColumns.map((col) => String(row.by?.[col] ?? 0)),
         Number(row.wholesale ?? 0).toFixed(2),
-        row.description || "-",
+        inventoryRowDescription(row) || "-",
       ]);
       const baseColWidths = [34, 58, 72, 56, 56, 88, 96, 62, ...inventoryColumns.map(() => 44), 72, 120];
       const usableWidth = width - marginX * 2;
@@ -2238,7 +2392,7 @@ export default function Home() {
           design_no: String(matchedRow.design_no || "").trim(),
           item_name: String(matchedRow.item_name || "").trim(),
           category: String(matchedRow.category || "").trim(),
-          description: String(matchedRow.description || "").trim(),
+          description: inventoryRowDescription(matchedRow),
           branch: String(matchedRow.branch || "").trim(),
         };
         const dataMismatch = Object.entries(normalizedKnown).some(([key, value]) => value && normalizedIncoming[key as keyof typeof normalizedIncoming] !== value);
@@ -2265,7 +2419,11 @@ export default function Home() {
       }
       await commitInventoryItem(payload);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Item save failed");
+      setInventoryPopup({
+        title: "Error",
+        message: err instanceof Error ? err.message : "Item save failed",
+        confirm: false,
+      });
     } finally {
       setLoading(false);
     }
@@ -2307,7 +2465,7 @@ export default function Home() {
     const quantity = Math.max(0, Number(payload.quantity || 0));
     setInventoryHighlightBranch(branchName);
     setInventoryHighlightArtNo(normalizedArtNo);
-    setInventoryHighlightExpiresAt(Date.now() + 20000);
+    setInventoryHighlightExpiresAt(Date.now() + 3000);
     setInventoryRows((current) => {
       const existingIndex = current.findIndex((row) => String(row.art_no || "").trim().toUpperCase() === normalizedArtNo);
       const existingRow = existingIndex >= 0 ? current[existingIndex] : null;
@@ -2319,7 +2477,11 @@ export default function Home() {
         item_name: String(payload.item_name || existingRow.item_name || "").trim(),
         category: String(payload.category || existingRow.category || "").trim(),
         branch: branchName,
-        description: String(payload.desc || existingRow.description || "").trim(),
+        description: syncInventoryDescription({
+          category: payload.category ?? existingRow.category,
+          item_name: payload.item_name ?? existingRow.item_name,
+          description: payload.desc ?? existingRow.description,
+        }),
         available_qty: Number(existingRow.available_qty ?? existingRow.total ?? 0) + quantity,
         total: Number(existingRow.total ?? existingRow.available_qty ?? 0) + quantity,
         by: {
@@ -2338,7 +2500,11 @@ export default function Home() {
         item_name: String(payload.item_name || "").trim(),
         category: String(payload.category || "").trim(),
         branch: branchName,
-        description: String(payload.desc || "").trim(),
+        description: syncInventoryDescription({
+          category: payload.category,
+          item_name: payload.item_name,
+          description: payload.desc,
+        }),
         available_qty: quantity,
         total: quantity,
         by: { [branchName]: quantity },
@@ -2358,53 +2524,65 @@ export default function Home() {
   async function commitInventoryItem(payload: any) {
     const normalizedArtNo = String(payload.art_no || "").trim().toUpperCase();
     const branchName = String(payload.branch || "H.O").trim() || "H.O";
+    const hasExistingRow = inventoryRows.some((row) => String(row.art_no || "").trim().toUpperCase() === normalizedArtNo);
     if (token.startsWith("local-")) {
       applyInventoryPayloadLocally(payload);
-      appendLocalAuditHistory(payload, inventoryRows.some((row) => String(row.art_no || "").trim().toUpperCase() === normalizedArtNo) ? "updated" : "created");
+      appendLocalAuditHistory(payload, hasExistingRow ? "updated" : "created");
       setStatus(`Item saved locally for ${branchName}.`);
       return;
     }
-    setStatus(`Saving ${normalizedArtNo} to backend for ${branchName}...`);
-    try {
-      await api("/inventory/items", token, {
-        method: "POST",
-        timeoutMs: 15000,
-        body: JSON.stringify(payload),
-      });
-      applyInventoryPayloadLocally(payload);
-      appendLocalAuditHistory(payload, inventoryRows.some((row) => String(row.art_no || "").trim().toUpperCase() === normalizedArtNo) ? "updated" : "created");
-      setStatus(`Item saved to backend for ${branchName}.`);
-      setItemForm({
-        art_no: "",
-        batch_no: "",
-        design_no: "",
-        item_name: "",
-        wholesale: "",
-        description: "",
-        category: "None",
-        quantity: "0",
-        branch: branchName,
-      });
-      setArtNoFormLookup(null);
-      setScanStatus("No scan yet");
-      setBarcodeScan("");
-      setInventorySuccessPopup({
-        title: "Saved Successfully",
-        message: `ART NO ${normalizedArtNo} was saved to the backend database successfully.`,
-      });
-      void refreshAll().catch(() => {
-        // Keep the saved row visible even if a refresh is slow or temporarily fails.
-      });
-      if (inventorySuccessPopupTimerRef.current) {
-        window.clearTimeout(inventorySuccessPopupTimerRef.current);
-      }
-      inventorySuccessPopupTimerRef.current = window.setTimeout(() => {
-        setInventorySuccessPopup(null);
-        inventorySuccessPopupTimerRef.current = null;
-      }, 4000);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Item save failed");
+    applyInventoryPayloadLocally(payload);
+    appendLocalAuditHistory(payload, hasExistingRow ? "updated" : "created");
+    setStatus(`Saved ${normalizedArtNo} locally and syncing to backend...`);
+    setItemForm({
+      art_no: "",
+      batch_no: "",
+      design_no: "",
+      item_name: "",
+      wholesale: "",
+      description: "",
+      category: "None",
+      quantity: "0",
+      branch: branchName,
+    });
+    setArtNoFormLookup(null);
+    setScanStatus("No scan yet");
+    setBarcodeScan("");
+    setInventorySuccessPopup({
+      title: "Saved Successfully",
+      message: `ART NO ${normalizedArtNo} was added instantly and is now syncing to the backend.`,
+    });
+    if (inventorySuccessPopupTimerRef.current) {
+      window.clearTimeout(inventorySuccessPopupTimerRef.current);
     }
+    inventorySuccessPopupTimerRef.current = window.setTimeout(() => {
+      setInventorySuccessPopup(null);
+      inventorySuccessPopupTimerRef.current = null;
+    }, 2000);
+    void (async () => {
+      try {
+        await api("/inventory/items", token, {
+          method: "POST",
+          timeoutMs: 60000,
+          body: JSON.stringify(payload),
+        });
+        setStatus(`Item saved to backend for ${branchName}.`);
+        window.setTimeout(() => {
+          void refreshAll();
+        }, 300);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : "Item save failed";
+        if (message.toLowerCase().includes("timed out")) {
+          setStatus(`Saved locally for ${branchName}. Backend sync is still processing.`);
+          return;
+        }
+        setInventoryPopup({
+          title: "Error",
+          message,
+          confirm: false,
+        });
+      }
+    })();
   }
 
   function dismissInventoryPopup() {
@@ -2760,7 +2938,7 @@ export default function Home() {
 
   useEffect(() => {
     if (!inventoryHighlightBranch && !inventoryHighlightArtNo) return undefined;
-    const expiresAt = inventoryHighlightExpiresAt || Date.now() + 20000;
+    const expiresAt = inventoryHighlightExpiresAt || Date.now() + 3000;
     const remaining = Math.max(0, expiresAt - Date.now());
     if (inventoryHighlightTimerRef.current) {
       window.clearTimeout(inventoryHighlightTimerRef.current);
@@ -2808,7 +2986,7 @@ export default function Home() {
       String(itemForm.design_no || "") === String(match.design_no || "") &&
       String(itemForm.item_name || "") === String(match.item_name || "") &&
       String(itemForm.category || "") === String(match.category || "None") &&
-      String(itemForm.description || "") === String(match.description || "") &&
+      String(itemForm.description || "") === String(inventoryRowDescription(match) || "") &&
       String(itemForm.branch || "") === String(match.branch || "H.O") &&
       String(itemForm.wholesale || "") === String(match.wholesale ?? "") &&
       String(itemForm.quantity || "") === String(match.available_qty ?? match.total ?? "")
@@ -2947,7 +3125,7 @@ export default function Home() {
 
     sections.push(["Item Detail", ""].map(escapeCell).join(","));
     sections.push(
-      [["Field", "Value"], ["ART NO", selectedArtNo], ["Item Name", String(source.item_name || "-")], ["Batch No", String(source.batch_no || "-")], ["Design No", String(source.design_no || "-")], ["Category", String(source.category || "-")], ["Available", String(analyticsSummary.available)], ["Wholesale", String(source.wholesale ?? 0)], ["Retail", String(source.retail ?? 0)], ["Description", String(source.description || "-")], ["Branch", analyticsSummary.branch]]
+      [["Field", "Value"], ["ART NO", selectedArtNo], ["Item Name", String(source.item_name || "-")], ["Batch No", String(source.batch_no || "-")], ["Design No", String(source.design_no || "-")], ["Category", String(source.category || "-")], ["Available", String(analyticsSummary.available)], ["Wholesale", String(source.wholesale ?? 0)], ["Retail", String(source.retail ?? 0)], ["Description", String(inventoryRowDescription(source) || "-")], ["Branch", analyticsSummary.branch]]
         .map(([a, b]) => `${escapeCell(a)}${b !== undefined ? `,${escapeCell(String(b))}` : ""}`)
         .join("\n")
     );
@@ -3081,7 +3259,15 @@ export default function Home() {
                 </label>
                 <label className="field field-span-2">
                   Item Name
-                  <input value={itemForm.item_name} onChange={(e) => setItemForm((prev) => ({ ...prev, item_name: e.target.value }))} />
+                  <input
+                    value={itemForm.item_name}
+                    onChange={(e) =>
+                      setItemForm((prev) => {
+                        const item_name = e.target.value;
+                        return { ...prev, item_name, description: nextSuggestedDescription(prev, prev.category, item_name) };
+                      })
+                    }
+                  />
                 </label>
                 <label className="field">
                   Wholesale
@@ -3096,7 +3282,12 @@ export default function Home() {
                   <input
                     list="category-suggestions"
                     value={itemForm.category}
-                    onChange={(e) => setItemForm((prev) => ({ ...prev, category: e.target.value }))}
+                    onChange={(e) =>
+                      setItemForm((prev) => {
+                        const category = e.target.value;
+                        return { ...prev, category, description: nextSuggestedDescription(prev, category, prev.item_name) };
+                      })
+                    }
                     placeholder="Start typing a category"
                   />
                   <datalist id="category-suggestions">
@@ -3125,7 +3316,7 @@ export default function Home() {
                 </label>
                 <div className="form-actions form-actions-grid">
                   <button className="primary-btn" type="button" disabled={loading} onClick={() => submitInventoryItem()}>
-                    Add / Update Item
+                    {loading ? "Saving..." : "Add / Update Item"}
                   </button>
                 </div>
               </div>
@@ -3283,10 +3474,7 @@ export default function Home() {
                   </thead>
                   <tbody>
                     {visibleRows.map((row, index) => (
-                      <tr
-                        key={row.id ?? row.art_no}
-                        className={String(role || "").trim().toLowerCase() === "admin" && String(row.created_at || "").slice(0, 10) === todayKey ? "inventory-row-new" : undefined}
-                      >
+                      <tr key={row.id ?? row.art_no}>
                         <td>
                           <input
                             type="checkbox"
@@ -3325,7 +3513,7 @@ export default function Home() {
                           <td key={col}>{row.by?.[col] ?? 0}</td>
                         ))}
                         <td>{Number(row.wholesale ?? 0).toFixed(2)}</td>
-                        <td>{row.description || "-"}</td>
+                        <td>{inventoryRowDescription(row) || "-"}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -3608,7 +3796,7 @@ export default function Home() {
                         <td>{row.category || "-"}</td>
                         <td>{row.quantity || "-"}</td>
                         <td>{row.branch || "-"}</td>
-                        <td>{row.description || "-"}</td>
+                        <td>{inventoryRowDescription(row) || "-"}</td>
                       </tr>
                     )) : (
                       <tr>
@@ -3627,6 +3815,87 @@ export default function Home() {
                   onCancel={() => setInventoryUploadPopup(null)}
                 />
               ) : null}
+            </section>
+          </section>
+        ) : isSalesLoadTab ? (
+          <section className="inventory-upload-screen sales-load-screen">
+            <section className="panel inventory-upload-panel sales-load-panel">
+              <div className="panel-head">
+                <div>
+                  <h2>Sales Load</h2>
+                </div>
+              </div>
+              <div className="bulk-note">
+                Required columns: <strong>ART NO, Item, PRICE, QTY</strong>
+              </div>
+              <div className="filters">
+                <label className="field">
+                  From
+                  <select value={bulkStockFrom} onChange={(e) => setBulkStockFrom(e.target.value)}>
+                    {branchOptions.map((branch) => (
+                      <option key={branch} value={branch}>
+                        {branch}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="field">
+                  To
+                  <select value={bulkStockTo} onChange={(e) => setBulkStockTo(e.target.value)}>
+                    {branchOptions.map((branch) => (
+                      <option key={branch} value={branch}>
+                        {branch}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              </div>
+              <div className="bulk-file-row">
+                <label className="field">
+                  <input value={bulkStockFileName} readOnly placeholder="No file selected" />
+                  <input
+                    className="sales-load-hidden-file"
+                    type="file"
+                    accept=".csv,.xlsx,.xls"
+                    onChange={(e) => handleBulkFilePick(e.target.files?.[0] || null)}
+                  />
+                </label>
+                <button className="classic-btn" type="button" onClick={() => document.querySelector<HTMLInputElement>('.bulk-stock-panel input[type="file"]')?.click()}>
+                  Browse
+                </button>
+                <button className="classic-btn" type="button" onClick={addBulkStockToPendingQueue}>
+                  Add
+                </button>
+                <button className="primary-btn" type="button" disabled={bulkStockLoading} onClick={() => loadBulkStockFile()}>
+                  Load File
+                </button>
+              </div>
+              <div className="bulk-preview">
+                <table className="inventory-table">
+                  <thead>
+                    <tr>
+                      <th>ART NO</th>
+                      <th>Item</th>
+                      <th>PRICE</th>
+                      <th>QTY</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {bulkStockPreview.length ? bulkStockPreview.map((row, index) => (
+                      <tr key={`${row.art_no || index}-${index}`} className={row.missingArt ? "bulk-row-missing-art" : ""}>
+                        <td>{row.art_no || "-"}</td>
+                        <td>{row.item_name || "-"}</td>
+                        <td>{row.wholesale || "-"}</td>
+                        <td>{row.quantity || "-"}</td>
+                      </tr>
+                    )) : (
+                      <tr>
+                        <td colSpan={4}>No bulk file loaded yet</td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
             </section>
           </section>
         ) : activeTab === "stock-movement" ? (
@@ -3801,9 +4070,9 @@ export default function Home() {
                     <button className="classic-btn" type="button" onClick={() => document.querySelector<HTMLInputElement>('.bulk-stock-panel input[type="file"]')?.click()}>
                       Browse
                     </button>
-                <button className="classic-btn" type="button" onClick={addBulkStockToPendingQueue}>
-                  Add
-                </button>
+                    <button className="classic-btn" type="button" onClick={addBulkStockToPendingQueue}>
+                      Add
+                    </button>
                     <button className="primary-btn" type="button" disabled={bulkStockLoading} onClick={() => loadBulkStockFile()}>
                       Load File
                     </button>
@@ -3855,7 +4124,7 @@ export default function Home() {
                         <span className="pending-btn-mobile">Remove</span>
                       </button>
                       <button className="primary-btn" type="button" disabled={loading || !pendingTransfers.length} onClick={transferPendingQueue}>
-                        Transfer
+                        {loading ? "Transferring..." : "Transfer"}
                       </button>
                     </div>
                   </div>

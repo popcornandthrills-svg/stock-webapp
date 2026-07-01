@@ -25,7 +25,11 @@ function isSameOrigin(request: Request) {
   const origin = request.headers.get("origin") || request.headers.get("referer") || "";
   if (!origin) return process.env.NODE_ENV !== "production";
   try {
-    return new URL(origin).host === new URL(request.url).host;
+    const originUrl = new URL(origin);
+    const requestUrl = new URL(request.url);
+    if (originUrl.host === requestUrl.host) return true;
+    const localHosts = new Set(["localhost", "127.0.0.1", "::1"]);
+    return localHosts.has(originUrl.hostname) && localHosts.has(requestUrl.hostname);
   } catch {
     return false;
   }

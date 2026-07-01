@@ -1,0 +1,12 @@
+services:
+  - type: web
+    name: stock-webapp
+    env: docker
+    plan: free
+    autoDeploy: true
+    healthCheckPath: /health
+    envVars:
+      - key: DATABASE_URL
+        sync: false
+      - key: API_SECRET_KEY
+        sync: false

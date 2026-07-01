@@ -674,13 +674,13 @@ h1, h2, h3, p {
 }
 
 .inventory-dialog-backdrop {
-  position: absolute;
+  position: fixed;
   inset: 0;
   background: rgba(23, 29, 41, 0.18);
   display: flex;
   align-items: center;
   justify-content: center;
-  z-index: 40;
+  z-index: 2050;
 }
 
 .system-dialog {
@@ -1450,18 +1450,6 @@ h1, h2, h3, p {
   background: #f6f9fc;
 }
 
-.inventory-table tbody tr.inventory-row-new td {
-  background: linear-gradient(90deg, rgba(255, 241, 204, 0.96), rgba(255, 250, 236, 0.98));
-}
-
-.inventory-table tbody tr.inventory-row-new td:nth-child(4) {
-  color: #8a5a00;
-}
-
-.inventory-table tbody tr.inventory-row-new td:nth-child(-n + 3) {
-  background: linear-gradient(90deg, rgba(255, 236, 179, 0.98), rgba(255, 245, 214, 0.98));
-}
-
 .select-head {
   display: inline-flex;
   align-items: center;
@@ -2006,6 +1994,52 @@ h1, h2, h3, p {
 .stock-movement-stack {
   display: grid;
   gap: 14px;
+}
+
+.sales-load-stack {
+  display: grid;
+  gap: 14px;
+  min-height: 0;
+  width: 100%;
+  max-width: none;
+  justify-self: stretch;
+  align-self: stretch;
+  align-items: stretch;
+  flex: 1 1 auto;
+}
+
+.sales-load-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 10px;
+  align-items: stretch;
+  min-height: calc(100dvh - 120px);
+  width: 100%;
+  max-width: none;
+  justify-self: stretch;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.sales-load-layout .bulk-stock-panel {
+  width: 100%;
+}
+
+.sales-load-stack > .panel,
+.sales-load-layout > .panel {
+  width: 100%;
+  max-width: none;
+  justify-self: stretch;
+}
+
+.sales-load-screen {
+  width: 100%;
+  display: block;
+}
+
+.sales-load-panel {
+  width: 100%;
+  max-width: none;
 }
 
 .stock-left-column {

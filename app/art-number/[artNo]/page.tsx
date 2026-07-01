@@ -1,4 +1,5 @@
 "use client";
+"use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { PDFDocument, StandardFonts, rgb } from "pdf-lib";
@@ -204,7 +205,7 @@ function downloadTextFile(filename: string, content: string, type = "text/plain;
   URL.revokeObjectURL(url);
 }
 
-function fetchWithTimeout(input: RequestInfo | URL, init: RequestInit = {}, timeoutMs = 8000) {
+function fetchWithTimeout(input: RequestInfo | URL, init: RequestInit = {}, timeoutMs = 20000) {
   const controller = new AbortController();
   const timer = window.setTimeout(() => controller.abort(), timeoutMs);
   return fetch(input, { ...init, signal: controller.signal }).finally(() => {
@@ -298,7 +299,7 @@ export default function ArtNumberDetailsPage() {
         const storedInventoryRows = readLocalRecordArray<AnyRecord>(LOCAL_INVENTORY_KEY);
         const storedMoveRows = readLocalRecordArray<AnyRecord>(LOCAL_MOVES_KEY);
         const storedAuditRows = readLocalAuditHistory() as AnyRecord[];
-        const bootstrapResponse = await fetchWithTimeout("/api/bootstrap", { cache: "no-store" }, 3000).catch(() => null);
+        const bootstrapResponse = await fetchWithTimeout("/api/bootstrap", { cache: "no-store" }, 8000).catch(() => null);
         const bootstrapJson = bootstrapResponse?.ok ? await bootstrapResponse.json().catch(() => ({})) : {};
         bootstrapCacheRef.current = {
           inventory: Array.isArray(bootstrapJson?.inventory) && bootstrapJson.inventory.length ? bootstrapJson.inventory : storedInventoryRows,
@@ -324,22 +325,22 @@ export default function ArtNumberDetailsPage() {
           fetchWithTimeout(apiUrl(`/inventory/item-by-art/${encodeURIComponent(artNo)}`), {
             cache: "no-store",
             headers: { Authorization: `Bearer ${token}` },
-          }, 8000),
+          }, 20000),
           fetchWithTimeout(apiUrl(`/inventory/item-history/${encodeURIComponent(artNo)}`), {
             cache: "no-store",
             headers: { Authorization: `Bearer ${token}` },
-          }, 8000),
+          }, 20000),
           fetchWithTimeout(apiUrl(`/stock/lookup?lookup=${encodeURIComponent(artNo)}`), {
             cache: "no-store",
             headers: { Authorization: `Bearer ${token}` },
-          }, 8000),
+          }, 20000),
           fetchWithTimeout(apiUrl(`/moves?limit=1000&art_no=${encodeURIComponent(artNo)}`), {
             // Ask the backend for this art number directly so older movements are not lost
             // when the global recent-moves slice is shorter than the item's history.
             // The backend still returns branch-scoped results based on the admin token.
             cache: "no-store",
             headers: { Authorization: `Bearer ${token}` },
-          }, 8000),
+          }, 20000),
         ]);
 
         const [itemJson, historyJson, lookupJson, movesJson] = await Promise.all([
@@ -445,45 +446,6 @@ export default function ArtNumberDetailsPage() {
     };
   }, [artNo, token]);
 
-  const detailedHistoryRows = useMemo(() => {
-    return history.map((row) => {
-      const note = String(row.note || "");
-      const event = String(row.event_type || "");
-      const changeType = /BATCH NO/i.test(note)
-        ? "Batch Change"
-        : /DESIGN NO/i.test(note)
-          ? "Design Change"
-          : /stock movement/i.test(note) || /move|transfer|stock/i.test(event)
-            ? "Stock Movement"
-            : event || "Inventory Change";
-
-      return {
-        ...row,
-        changeType,
-      };
-    });
-  }, [history]);
-
-  const changeActors = useMemo(() => {
-    const inventoryChanges = detailedHistoryRows.filter((row) => String(row.event_type || "").toLowerCase() === "inventory_item_upsert");
-    const createdRow = [...inventoryChanges]
-      .filter((row) => /created/i.test(String(row.note || "")))
-      .sort((a, b) => String(a.created_at || "").localeCompare(String(b.created_at || "")))[0];
-    const updatedRow = [...inventoryChanges]
-      .filter((row) => /updated/i.test(String(row.note || "")))
-      .sort((a, b) => String(b.created_at || "").localeCompare(String(a.created_at || "")))[0];
-    const latestRow = [...inventoryChanges].sort((a, b) => String(b.created_at || "").localeCompare(String(a.created_at || "")))[0];
-    return {
-      createdBy: createdRow?.actor_name || latestRow?.actor_name || "-",
-      createdRole: createdRow?.role || latestRow?.role || "-",
-      createdBranch: createdRow?.branch_name || latestRow?.branch_name || "-",
-      updatedBy: updatedRow?.actor_name || latestRow?.actor_name || "-",
-      updatedRole: updatedRow?.role || latestRow?.role || "-",
-      updatedBranch: updatedRow?.branch_name || latestRow?.branch_name || "-",
-      lastChangeAt: updatedRow?.created_at || latestRow?.created_at || "-",
-    };
-  }, [detailedHistoryRows]);
-
   const detailsRows = useMemo(
     () => [
       ["Art No", item?.art_no || artNo || "-"],
@@ -493,19 +455,10 @@ export default function ArtNumberDetailsPage() {
       ["Branch Qty", normalizeBranchQty(item || {})],
       ["Wholesale", formatCurrency(Number(item?.wholesale || 0))],
       ["Description", item?.description || "-"],
-      ...(role === "admin"
-        ? [
-            ["Created By", `${changeActors.createdBy} (${changeActors.createdRole})`],
-            ["Created Branch", changeActors.createdBranch],
-            ["Updated By", `${changeActors.updatedBy} (${changeActors.updatedRole})`],
-            ["Updated Branch", changeActors.updatedBranch],
-            ["Last Change At", formatDate(changeActors.lastChangeAt)],
-          ]
-        : []),
       ["Created At", formatDate(item?.created_at)],
       ["Last Updated", formatDate(item?.updated_at)],
     ],
-    [artNo, changeActors, item, role]
+    [artNo, item]
   );
 
   const changeSummary = useMemo(() => {
@@ -785,49 +738,6 @@ export default function ArtNumberDetailsPage() {
                 </table>
               </div>
 
-              {role === "admin" ? (
-                <>
-                  <div className="section-title" style={{ marginTop: 14 }}>
-                    Admin Change History
-                  </div>
-                  <div className="table-wrap art-movement-wrap">
-                    <table className="inventory-table">
-                      <thead>
-                        <tr>
-                          <th>Change Type</th>
-                          <th>Time</th>
-                          <th>Actor</th>
-                          <th>Role</th>
-                          <th>Branch</th>
-                          <th>Event</th>
-                          <th>Status</th>
-                          <th>Note</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {detailedHistoryRows.length ? (
-                          detailedHistoryRows.map((row) => (
-                            <tr key={`${row.id || row.created_at || row.event_type || row.note}`}>
-                              <td>{row.changeType}</td>
-                              <td>{String(row.created_at || "").replace("T", " ").slice(0, 16) || "-"}</td>
-                              <td>{row.actor_name || "-"}</td>
-                              <td>{row.role || "-"}</td>
-                              <td>{row.branch_name || "-"}</td>
-                              <td>{row.event_type || "-"}</td>
-                              <td>{row.status || "-"}</td>
-                              <td>{row.note || "-"}</td>
-                            </tr>
-                          ))
-                        ) : (
-                          <tr>
-                            <td colSpan={8}>No inventory change history found</td>
-                          </tr>
-                        )}
-                      </tbody>
-                    </table>
-                  </div>
-                </>
-              ) : null}
             </>
           ) : !loading ? (
             <div className="art-minimal-status">No details or stock movement rows found for this art number.</div>

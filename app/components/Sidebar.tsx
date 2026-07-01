@@ -14,9 +14,26 @@ type SidebarProps = {
 const tabs = [
   "inventory",
   "stock-movement",
+  "sales-load",
   "moves",
   "admin-panel",
 ];
+
+const tabLabels: Record<string, string> = {
+  inventory: "Inventory",
+  "sales-load": "Sales Load",
+  "stock-movement": "Stock Movement",
+  moves: "Moves",
+  "admin-panel": "Admin Panel",
+};
+
+function resolveTab(tab: string) {
+  return tab;
+}
+
+function isActiveTab(activeTab: string, tab: string) {
+  return activeTab === tab;
+}
 
 export function Sidebar({ activeTab, userName, branchName, role, onNavigate, onLogout }: SidebarProps) {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
@@ -57,8 +74,8 @@ export function Sidebar({ activeTab, userName, branchName, role, onNavigate, onL
       <nav className="tab-list desktop-nav" aria-label="Primary">
         {tabs.map((tab) => (
           tab === "admin-panel" && role !== "admin" ? null : (
-          <button key={tab} type="button" className={activeTab === tab ? "tab active" : "tab"} onClick={() => onNavigate(tab)}>
-            {tab.replace("-", " ")}
+          <button key={tab} type="button" className={isActiveTab(activeTab, tab) ? "tab active" : "tab"} onClick={() => onNavigate(resolveTab(tab))}>
+            {tabLabels[tab] || tab.replace("-", " ")}
           </button>
           )
         ))}
@@ -86,8 +103,8 @@ export function Sidebar({ activeTab, userName, branchName, role, onNavigate, onL
         <nav className={`tab-list mobile-nav-list ${mobileMenuOpen ? "open" : ""}`} aria-label="Primary mobile">
           {tabs.map((tab) => (
             tab === "admin-panel" && role !== "admin" ? null : (
-              <button key={tab} type="button" className={activeTab === tab ? "tab active" : "tab"} onClick={() => handleMobileNavigate(tab)}>
-                {tab.replace("-", " ")}
+              <button key={tab} type="button" className={isActiveTab(activeTab, tab) ? "tab active" : "tab"} onClick={() => handleMobileNavigate(resolveTab(tab))}>
+                {tabLabels[tab] || tab.replace("-", " ")}
               </button>
             )
           ))}

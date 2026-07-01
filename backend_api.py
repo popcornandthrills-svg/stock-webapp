@@ -61,6 +61,11 @@ app.add_middleware(
 )
 
 
+@app.get("/health")
+def health_check():
+    return {"status": "ok"}
+
+
 class LoginMode(str, Enum):
     admin = "admin"
     shop_manager = "shop_manager"
@@ -722,7 +727,7 @@ def inventory(
     search: str = "",
     branch: Optional[str] = None,
     low_stock_only: bool = False,
-    limit: int = Query(default=200, ge=1, le=1000),
+    limit: int = Query(default=50000, ge=1, le=50000),
     user: CurrentUser = Depends(get_current_user),
 ):
     branch_name, _branch_id = branch_context(branch, user)
@@ -833,6 +838,11 @@ def create_or_update_inventory_item(payload: InventoryItemRequest, user: Current
         if payload.category not in CATEGORIES:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Category must be one of: {', '.join(CATEGORIES)}")
         data = payload.model_dump()
+        data["desc"] = str(data.get("desc") or data.get("description") or "").strip()
+        if not data["desc"]:
+            data["desc"] = " - ".join(
+                part for part in [str(data.get("category") or "").strip(), str(data.get("item_name") or "").strip()] if part
+            )
         existing = db.item_by_art(payload.art_no)
         if user.is_staff:
             if not existing:
@@ -858,10 +868,11 @@ def create_or_update_inventory_item(payload: InventoryItemRequest, user: Current
         mode = db.add_item(data)
         actor_name = user.user_name or "Admin"
         branch_id = int(data["branch_id"]) if data.get("branch_id") is not None else None
+        existing_item = existing or {}
         note = (
             f"ART NO {str(payload.art_no).strip().upper()} {mode} by {actor_name} | "
-            f"Batch No: {str(existing.get('batch_no') or '-').strip()} -> {str(payload.batch_no).strip()} | "
-            f"Design No: {str(existing.get('design_no') or '-').strip()} -> {str(payload.design_no).strip()} | "
+            f"Batch No: {str(existing_item.get('batch_no') or '-').strip()} -> {str(payload.batch_no).strip()} | "
+            f"Design No: {str(existing_item.get('design_no') or '-').strip()} -> {str(payload.design_no).strip()} | "
             f"Item: {str(payload.item_name).strip()} | Qty: {int(payload.quantity or 0)} | Branch: {str(payload.branch or 'H.O').strip()}"
         )
         db.add_audit_log(
@@ -1208,4 +1219,5 @@ def audit_logs(limit: int = Query(default=200, ge=1, le=1000), _user: CurrentUse
 
 
 if __name__ == "__main__":
-    uvicorn.run("backend_api:app", host="127.0.0.1", port=8000, reload=False)
+    port = int(os.getenv("PORT", "8000") or "8000")
+    uvicorn.run("backend_api:app", host="0.0.0.0", port=port, reload=False)
